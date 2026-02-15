@@ -1,0 +1,16 @@
+{
+  "name": "@privacy-assistant/shared",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "dev": "echo \"shared dev not required\"",
+    "build": "echo \"shared build setup in step 1.2\"",
+    "lint": "echo \"shared lint setup deferred\"",
+    "test": "echo \"shared tests setup deferred\"",
+    "typecheck": "tsc -p tsconfig.json"
+  }
+}

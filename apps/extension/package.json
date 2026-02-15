@@ -1,0 +1,16 @@
+{
+  "name": "@privacy-assistant/extension",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "echo \"extension dev setup in step 2\"",
+    "build": "echo \"extension build setup in step 2\"",
+    "lint": "echo \"extension lint setup deferred\"",
+    "test": "echo \"extension tests setup deferred\"",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@privacy-assistant/shared": "workspace:*"
+  }
+}

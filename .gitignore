@@ -1,0 +1,14 @@
+node_modules/
+dist/
+.next/
+coverage/
+*.tsbuildinfo
+plan/
+
+# Local environment variables and secrets
+.env
+.env.local
+.env.*.local
+apps/*/.env
+apps/*/.env.local
+apps/*/.env.*.local
