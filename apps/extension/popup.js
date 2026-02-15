@@ -1,7 +1,7 @@
-chrome.runtime.sendMessage({ type: 'PING' }, (response) => {
+chrome.runtime.sendMessage({ type: "RUN_ANALYSIS" }, (response) => {
   if (chrome.runtime.lastError) {
-    console.warn('Background ping failed:', chrome.runtime.lastError.message);
+    console.warn("Analysis request failed:", chrome.runtime.lastError.message);
     return;
   }
-  console.log('Background ping response:', response);
+  console.log("Analysis response:", response);
 });
