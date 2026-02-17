@@ -3,6 +3,14 @@
  * Collects page-level signals (scripts and storage) in a defensive way so
  * failures in one collector do not crash the full analysis response.
  */
+const MESSAGE_TYPES = Object.freeze({
+  PING_CONTENT: "PING_CONTENT",
+  COLLECT_PAGE_SIGNALS: "COLLECT_PAGE_SIGNALS"
+});
+
+function isValidRequestId(requestId) {
+  return requestId === undefined || (typeof requestId === "string" && requestId.trim().length > 0);
+}
 
 function createCollectorSuccess(name, data, startedAt) {
   return {
@@ -119,7 +127,7 @@ function collectPageContext() {
   };
 }
 
-function collectPageSignals() {
+function collectPageSignals(requestId) {
   const requestedAt = new Date().toISOString();
   const startedAt = Date.now();
 
@@ -135,6 +143,7 @@ function collectPageSignals() {
   return {
     ok: true,
     source: "content",
+    requestId: requestId ?? null,
     requestedAt,
     completedAt: new Date().toISOString(),
     durationMs: Date.now() - startedAt,
@@ -149,23 +158,49 @@ function collectPageSignals() {
 }
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-  if (message?.type === "PING_CONTENT") {
-    sendResponse({ ok: true, source: "content" });
+  if (!message || typeof message !== "object" || typeof message.type !== "string") {
+    sendResponse({
+      ok: false,
+      source: "content",
+      requestId: null,
+      status: "failed",
+      code: "INVALID_MESSAGE",
+      error: "Message must be an object with a string type"
+    });
     return;
   }
 
-  if (message?.type !== "COLLECT_PAGE_SIGNALS") {
+  if (!isValidRequestId(message.requestId)) {
+    sendResponse({
+      ok: false,
+      source: "content",
+      requestId: null,
+      status: "failed",
+      code: "INVALID_MESSAGE",
+      error: "requestId must be a non-empty string when provided"
+    });
+    return;
+  }
+
+  if (message.type === MESSAGE_TYPES.PING_CONTENT) {
+    sendResponse({ ok: true, source: "content", requestId: message.requestId ?? null });
+    return;
+  }
+
+  if (message.type !== MESSAGE_TYPES.COLLECT_PAGE_SIGNALS) {
     return;
   }
 
   try {
-    const result = collectPageSignals();
+    const result = collectPageSignals(message.requestId);
     sendResponse(result);
   } catch (error) {
     sendResponse({
       ok: false,
       source: "content",
+      requestId: message.requestId ?? null,
       status: "failed",
+      code: "CONTENT_COLLECTION_FAILED",
       error: error instanceof Error ? error.message : "Content collection failed unexpectedly"
     });
   }

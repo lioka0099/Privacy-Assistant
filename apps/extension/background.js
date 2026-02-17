@@ -3,6 +3,13 @@
  * Orchestrates extension analysis requests from the popup, runs collectors
  * with timeout protection, and returns a normalized analysis payload.
  */
+import {
+  MESSAGE_TYPES,
+  createErrorPayload,
+  createRequestId,
+  validateIncomingMessage
+} from "./messages.js";
+
 const ANALYSIS_TIMEOUT_MS = 1500;
 
 chrome.runtime.onInstalled.addListener(() => {
@@ -66,18 +73,48 @@ async function withTimeout(name, task, timeoutMs = ANALYSIS_TIMEOUT_MS) {
  * Verifies that the content script is reachable on the target tab.
  * Used as a baseline health/smoke signal for page-level collection.
  */
-async function collectContentReachability(tabId) {
+async function collectContentReachability(tabId, requestId) {
   return new Promise((resolve, reject) => {
-    chrome.tabs.sendMessage(tabId, { type: "PING_CONTENT" }, (response) => {
+    chrome.tabs.sendMessage(tabId, { type: MESSAGE_TYPES.PING_CONTENT, requestId }, (response) => {
       if (chrome.runtime.lastError) {
         reject(new Error(chrome.runtime.lastError.message));
         return;
       }
+      if (!response || response.ok !== true) {
+        reject(new Error("Content script reachability check returned invalid response"));
+        return;
+      }
       resolve({
         reachable: Boolean(response?.ok),
-        source: response?.source ?? "unknown"
+        source: response?.source ?? "unknown",
+        requestId: response?.requestId ?? null
       });
     });
+  });
+}
+
+async function collectPageSignalsFromContent(tabId, requestId) {
+  return new Promise((resolve, reject) => {
+    chrome.tabs.sendMessage(
+      tabId,
+      { type: MESSAGE_TYPES.COLLECT_PAGE_SIGNALS, requestId },
+      (response) => {
+        if (chrome.runtime.lastError) {
+          reject(new Error(chrome.runtime.lastError.message));
+          return;
+        }
+        if (!response || response.ok !== true) {
+          reject(new Error(response?.error ?? "Content signal collection returned invalid response"));
+          return;
+        }
+        resolve({
+          requestId: response.requestId ?? null,
+          status: response.status,
+          summary: response.summary,
+          collectors: response.collectors
+        });
+      }
+    );
   });
 }
 
@@ -96,14 +133,15 @@ async function collectPlaceholderRuntimeSignals() {
  * Gets tab context, runs collectors in parallel with timeout guards, then
  * returns one normalized response object with summary stats.
  */
-async function runAnalysisPipeline() {
+async function runAnalysisPipeline(requestId) {
   const requestedAt = new Date().toISOString();
   const startedAt = Date.now();
 
   const tabContext = await getActiveTabContext();
 
   const collectors = await Promise.all([
-    withTimeout("contentReachability", () => collectContentReachability(tabContext.tabId)),
+    withTimeout("contentReachability", () => collectContentReachability(tabContext.tabId, requestId)),
+    withTimeout("contentPageSignals", () => collectPageSignalsFromContent(tabContext.tabId, requestId)),
     withTimeout("runtimeSignals", () => collectPlaceholderRuntimeSignals())
   ]);
 
@@ -113,6 +151,7 @@ async function runAnalysisPipeline() {
   return {
     ok: true,
     source: "background",
+    requestId,
     requestedAt,
     completedAt: new Date().toISOString(),
     durationMs: Date.now() - startedAt,
@@ -137,26 +176,47 @@ async function runAnalysisPipeline() {
  * - RUN_ANALYSIS: executes analysis pipeline asynchronously
  */
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-  if (message?.type === "PING") {
-    sendResponse({ ok: true, source: "background" });
+  const validation = validateIncomingMessage(message);
+  if (!validation.ok) {
+    sendResponse(
+      createErrorPayload({
+        source: "background",
+        requestId: null,
+        code: "INVALID_MESSAGE",
+        error: validation.error
+      })
+    );
     return;
   }
 
-  if (message?.type !== "RUN_ANALYSIS") {
+  if (message.type === MESSAGE_TYPES.PING) {
+    sendResponse({
+      ok: true,
+      source: "background",
+      requestId: message.requestId ?? null
+    });
     return;
   }
+
+  if (message.type !== MESSAGE_TYPES.RUN_ANALYSIS) {
+    return;
+  }
+
+  const requestId = message.requestId ?? createRequestId("analysis");
 
   (async () => {
     try {
-      const analysisResult = await runAnalysisPipeline();
+      const analysisResult = await runAnalysisPipeline(requestId);
       sendResponse(analysisResult);
     } catch (error) {
-      sendResponse({
-        ok: false,
-        source: "background",
-        status: "failed",
-        error: error instanceof Error ? error.message : "Analysis failed unexpectedly"
-      });
+      sendResponse(
+        createErrorPayload({
+          source: "background",
+          requestId,
+          code: "ANALYSIS_PIPELINE_FAILED",
+          error: error instanceof Error ? error.message : "Analysis failed unexpectedly"
+        })
+      );
     }
   })();
 
