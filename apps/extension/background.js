@@ -4,13 +4,19 @@
  * with timeout protection, and returns a normalized analysis payload.
  */
 import {
+  KNOWN_TRACKER_DOMAIN_PATTERNS,
   MESSAGE_TYPES,
+  SUSPICIOUS_ENDPOINT_PATTERNS,
+  isThirdPartyHost,
   createErrorPayload,
   createRequestId,
   validateIncomingMessage
 } from "./messages.js";
 
 const ANALYSIS_TIMEOUT_MS = 1500;
+const NETWORK_WINDOW_MS = 30000;
+const MAX_TAB_NETWORK_EVENTS = 500;
+const networkEventsByTab = new Map();
 
 chrome.runtime.onInstalled.addListener(() => {
   console.log("Privacy Assistant installed");
@@ -18,6 +24,121 @@ chrome.runtime.onInstalled.addListener(() => {
 
 function isSupportedHttpUrl(url) {
   return typeof url === "string" && (url.startsWith("http://") || url.startsWith("https://"));
+}
+
+function parseHostnameFromUrl(rawUrl) {
+  try {
+    return new URL(rawUrl).hostname;
+  } catch {
+    return "";
+  }
+}
+
+function appendNetworkEvent(tabId, event) {
+  const existing = networkEventsByTab.get(tabId) ?? [];
+  existing.push(event);
+
+  const cutoff = Date.now() - NETWORK_WINDOW_MS;
+  const filtered = existing.filter((entry) => entry.timestampMs >= cutoff);
+
+  while (filtered.length > MAX_TAB_NETWORK_EVENTS) {
+    filtered.shift();
+  }
+
+  networkEventsByTab.set(tabId, filtered);
+}
+
+chrome.webRequest.onBeforeRequest.addListener(
+  (details) => {
+    if (typeof details.tabId !== "number" || details.tabId < 0) {
+      return;
+    }
+    if (!isSupportedHttpUrl(details.url)) {
+      return;
+    }
+
+    appendNetworkEvent(details.tabId, {
+      timestampMs: Date.now(),
+      url: details.url,
+      requestHost: parseHostnameFromUrl(details.url),
+      initiatorHost: details.initiator ? parseHostnameFromUrl(details.initiator) : "",
+      type: details.type
+    });
+  },
+  { urls: ["http://*/*", "https://*/*"] }
+);
+
+async function collectCookieSignals(tabContext) {
+  const cookies = await chrome.cookies.getAll({ url: tabContext.url });
+  const firstPartyHost = tabContext.hostname;
+
+  let firstPartyCookieCount = 0;
+  let thirdPartyCookieEstimateCount = 0;
+  const thirdPartyDomains = new Set();
+
+  for (const cookie of cookies) {
+    const cookieDomain = (cookie.domain ?? "").replace(/^\./, "");
+    const thirdParty = isThirdPartyHost(cookieDomain, firstPartyHost);
+    if (thirdParty) {
+      thirdPartyCookieEstimateCount += 1;
+      if (cookieDomain) {
+        thirdPartyDomains.add(cookieDomain);
+      }
+    } else {
+      firstPartyCookieCount += 1;
+    }
+  }
+
+  return {
+    totalCookieCount: cookies.length,
+    firstPartyCookieCount,
+    thirdPartyCookieEstimateCount,
+    thirdPartyCookieDomains: Array.from(thirdPartyDomains)
+  };
+}
+
+async function collectNetworkRequestSignals(tabContext) {
+  const events = networkEventsByTab.get(tabContext.tabId) ?? [];
+  const firstPartyHost = tabContext.hostname;
+  const now = Date.now();
+  const recentEvents = events.filter((event) => event.timestampMs >= now - NETWORK_WINDOW_MS);
+
+  let thirdPartyRequestCount = 0;
+  let suspiciousEndpointHitCount = 0;
+  const trackerDomainMatches = new Set();
+
+  for (const event of recentEvents) {
+    if (isThirdPartyHost(event.requestHost, firstPartyHost)) {
+      thirdPartyRequestCount += 1;
+    }
+
+    const urlLower = event.url.toLowerCase();
+    if (SUSPICIOUS_ENDPOINT_PATTERNS.some((pattern) => urlLower.includes(pattern))) {
+      suspiciousEndpointHitCount += 1;
+    }
+
+    const hostLower = event.requestHost.toLowerCase();
+    for (const pattern of KNOWN_TRACKER_DOMAIN_PATTERNS) {
+      if (hostLower.includes(pattern)) {
+        trackerDomainMatches.add(event.requestHost);
+      }
+    }
+  }
+
+  const recentWindowStart = now - 5000;
+  const shortWindowCount = recentEvents.filter(
+    (event) => event.timestampMs >= recentWindowStart
+  ).length;
+
+  return {
+    observedWindowMs: NETWORK_WINDOW_MS,
+    totalObservedRequests: recentEvents.length,
+    thirdPartyRequestCount,
+    suspiciousEndpointHitCount,
+    knownTrackerDomainHitCount: trackerDomainMatches.size,
+    knownTrackerDomains: Array.from(trackerDomainMatches),
+    shortWindowBurstCount: shortWindowCount
+  };
 }
 
 /**
@@ -142,6 +263,8 @@ async function runAnalysisPipeline(requestId) {
   const collectors = await Promise.all([
     withTimeout("contentReachability", () => collectContentReachability(tabContext.tabId, requestId)),
     withTimeout("contentPageSignals", () => collectPageSignalsFromContent(tabContext.tabId, requestId)),
+    withTimeout("cookieSignals", () => collectCookieSignals(tabContext)),
+    withTimeout("networkRequestSignals", () => collectNetworkRequestSignals(tabContext)),
     withTimeout("runtimeSignals", () => collectPlaceholderRuntimeSignals())
   ]);
 

@@ -3,6 +3,13 @@
  * Collects page-level signals (scripts and storage) in a defensive way so
  * failures in one collector do not crash the full analysis response.
  */
+import {
+  KNOWN_TRACKER_DOMAIN_PATTERNS,
+  SUSPICIOUS_ENDPOINT_PATTERNS,
+  TRACKING_QUERY_PARAM_PATTERNS,
+  isThirdPartyHost
+} from "./messages.js";
+
 const MESSAGE_TYPES = Object.freeze({
   PING_CONTENT: "PING_CONTENT",
   COLLECT_PAGE_SIGNALS: "COLLECT_PAGE_SIGNALS"
@@ -66,7 +73,7 @@ function collectScriptSignals() {
       continue;
     }
 
-    const isThirdParty = parsed.hostname !== currentHost;
+    const isThirdParty = isThirdPartyHost(parsed.hostname, currentHost);
     externalScripts.push({
       src: parsed.href,
       hostname: parsed.hostname,
@@ -119,6 +126,53 @@ function collectStorageSignals() {
   };
 }
 
+function collectTrackingHeuristics() {
+  const scriptSources = Array.from(document.querySelectorAll("script[src]"))
+    .map((script) => script.getAttribute("src"))
+    .filter(Boolean);
+
+  const trackerDomainHits = new Set();
+  const endpointHits = [];
+
+  for (const src of scriptSources) {
+    const parsed = parseUrlSafely(src, window.location.href);
+    if (!parsed) {
+      continue;
+    }
+
+    const hostname = parsed.hostname.toLowerCase();
+    const hrefLower = parsed.href.toLowerCase();
+    for (const pattern of KNOWN_TRACKER_DOMAIN_PATTERNS) {
+      if (hostname.includes(pattern)) {
+        trackerDomainHits.add(hostname);
+      }
+    }
+    for (const pattern of SUSPICIOUS_ENDPOINT_PATTERNS) {
+      if (hrefLower.includes(pattern)) {
+        endpointHits.push({ pattern, url: parsed.href });
+      }
+    }
+  }
+
+  const activeQueryParams = [];
+  const currentParams = new URLSearchParams(window.location.search);
+  for (const [key] of currentParams.entries()) {
+    const lowerKey = key.toLowerCase();
+    if (TRACKING_QUERY_PARAM_PATTERNS.some((pattern) => lowerKey.includes(pattern))) {
+      activeQueryParams.push(key);
+    }
+  }
+
+  return {
+    trackerDomainHits: Array.from(trackerDomainHits),
+    trackerDomainHitCount: trackerDomainHits.size,
+    endpointPatternHitCount: endpointHits.length,
+    endpointPatternHits: endpointHits.slice(0, 25),
+    trackingQueryParams: activeQueryParams,
+    trackingQueryParamCount: activeQueryParams.length
+  };
+}
+
 function collectPageContext() {
   return {
     url: window.location.href,
@@ -134,7 +188,8 @@ function collectPageSignals(requestId) {
   const collectors = [
     runCollector("pageContext", () => collectPageContext()),
     runCollector("scriptSignals", () => collectScriptSignals()),
-    runCollector("storageSignals", () => collectStorageSignals())
+    runCollector("storageSignals", () => collectStorageSignals()),
+    runCollector("trackingHeuristics", () => collectTrackingHeuristics())
   ];
 
   const succeeded = collectors.filter((collector) => collector.status === "success").length;
