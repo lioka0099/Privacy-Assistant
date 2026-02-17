@@ -34,6 +34,158 @@ function parseHostnameFromUrl(rawUrl) {
   }
 }
 
+function getCollectorData(collectors, name) {
+  const collector = collectors.find((item) => item.name === name) ?? null;
+  if (!collector || collector.status !== "success") {
+    return null;
+  }
+  return collector.data ?? null;
+}
+
+function getNestedCollectorData(contentCollectorData, nestedCollectorName) {
+  if (!contentCollectorData || !Array.isArray(contentCollectorData.collectors)) {
+    return null;
+  }
+  const nestedCollector = contentCollectorData.collectors.find(
+    (collector) => collector.name === nestedCollectorName
+  );
+  if (!nestedCollector || nestedCollector.status !== "success") {
+    return null;
+  }
+  return nestedCollector.data ?? null;
+}
+
+function calculateConfidence(collectors) {
+  const failedCollectors = collectors.filter((collector) => collector.status === "failed").length;
+  if (failedCollectors === 0) {
+    return "high";
+  }
+  if (failedCollectors <= 2) {
+    return "medium";
+  }
+  return "low";
+}
+
+function toSafeNumber(value) {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function buildNormalizedAnalysis({ requestId, tabContext, collectors, durationMs, requestedAt, completedAt }) {
+  const contentPageSignals = getCollectorData(collectors, "contentPageSignals");
+  const scriptSignals = getNestedCollectorData(contentPageSignals, "scriptSignals") ?? {};
+  const storageSignals = getNestedCollectorData(contentPageSignals, "storageSignals") ?? {};
+  const trackingHeuristics = getNestedCollectorData(contentPageSignals, "trackingHeuristics") ?? {};
+  const pageContext = getNestedCollectorData(contentPageSignals, "pageContext") ?? {};
+  const cookieSignals = getCollectorData(collectors, "cookieSignals") ?? {};
+  const networkSignals = getCollectorData(collectors, "networkRequestSignals") ?? {};
+
+  const normalized = {
+    requestId,
+    schemaVersion: "1.0.0",
+    timestamps: {
+      requestedAt,
+      completedAt,
+      durationMs
+    },
+    page: {
+      tabId: tabContext.tabId,
+      url: tabContext.url,
+      hostname: tabContext.hostname,
+      title: pageContext.title ?? ""
+    },
+    sourceFlags: {
+      contentReachable: Boolean(getCollectorData(collectors, "contentReachability")?.reachable),
+      contentSignalsAvailable: Boolean(contentPageSignals),
+      cookieSignalsAvailable: Boolean(getCollectorData(collectors, "cookieSignals")),
+      networkSignalsAvailable: Boolean(getCollectorData(collectors, "networkRequestSignals"))
+    },
+    scriptSignals: {
+      totalScriptTagsWithSrc: toSafeNumber(scriptSignals.totalScriptTagsWithSrc),
+      externalScriptCount: toSafeNumber(scriptSignals.externalScriptCount),
+      thirdPartyScriptDomainCount: toSafeNumber(scriptSignals.thirdPartyScriptDomainCount),
+      thirdPartyScriptDomains: Array.isArray(scriptSignals.thirdPartyScriptDomains)
+        ? scriptSignals.thirdPartyScriptDomains
+        : []
+    },
+    storageSignals: {
+      localStorage: {
+        keyCount: toSafeNumber(storageSignals.localStorage?.keyCount),
+        approxBytes: toSafeNumber(storageSignals.localStorage?.approxBytes)
+      },
+      sessionStorage: {
+        keyCount: toSafeNumber(storageSignals.sessionStorage?.keyCount),
+        approxBytes: toSafeNumber(storageSignals.sessionStorage?.approxBytes)
+      }
+    },
+    trackingHeuristics: {
+      trackerDomainHitCount: toSafeNumber(trackingHeuristics.trackerDomainHitCount),
+      endpointPatternHitCount: toSafeNumber(trackingHeuristics.endpointPatternHitCount),
+      trackingQueryParamCount: toSafeNumber(trackingHeuristics.trackingQueryParamCount),
+      trackerDomainHits: Array.isArray(trackingHeuristics.trackerDomainHits)
+        ? trackingHeuristics.trackerDomainHits
+        : [],
+      trackingQueryParams: Array.isArray(trackingHeuristics.trackingQueryParams)
+        ? trackingHeuristics.trackingQueryParams
+        : []
+    },
+    cookieSignals: {
+      totalCookieCount: toSafeNumber(cookieSignals.totalCookieCount),
+      firstPartyCookieCount: toSafeNumber(cookieSignals.firstPartyCookieCount),
+      thirdPartyCookieEstimateCount: toSafeNumber(cookieSignals.thirdPartyCookieEstimateCount),
+      thirdPartyCookieDomains: Array.isArray(cookieSignals.thirdPartyCookieDomains)
+        ? cookieSignals.thirdPartyCookieDomains
+        : []
+    },
+    networkSignals: {
+      observedWindowMs: toSafeNumber(networkSignals.observedWindowMs),
+      totalObservedRequests: toSafeNumber(networkSignals.totalObservedRequests),
+      thirdPartyRequestCount: toSafeNumber(networkSignals.thirdPartyRequestCount),
+      suspiciousEndpointHitCount: toSafeNumber(networkSignals.suspiciousEndpointHitCount),
+      knownTrackerDomainHitCount: toSafeNumber(networkSignals.knownTrackerDomainHitCount),
+      shortWindowBurstCount: toSafeNumber(networkSignals.shortWindowBurstCount),
+      knownTrackerDomains: Array.isArray(networkSignals.knownTrackerDomains)
+        ? networkSignals.knownTrackerDomains
+        : []
+    },
+    derived: {
+      totalThirdPartySignals:
+        toSafeNumber(scriptSignals.thirdPartyScriptDomainCount) +
+        toSafeNumber(cookieSignals.thirdPartyCookieEstimateCount) +
+        toSafeNumber(networkSignals.thirdPartyRequestCount),
+      totalTrackingIndicators:
+        toSafeNumber(trackingHeuristics.trackerDomainHitCount) +
+        toSafeNumber(trackingHeuristics.endpointPatternHitCount) +
+        toSafeNumber(trackingHeuristics.trackingQueryParamCount) +
+        toSafeNumber(networkSignals.suspiciousEndpointHitCount) +
+        toSafeNumber(networkSignals.knownTrackerDomainHitCount)
+    },
+    confidence: calculateConfidence(collectors)
+  };
+
+  return normalized;
+}
+
+function validateNormalizedAnalysis(normalized) {
+  if (!normalized || typeof normalized !== "object") {
+    throw new Error("Normalized analysis must be an object");
+  }
+
+  const requiredRootFields = ["schemaVersion", "page", "sourceFlags", "confidence"];
+  for (const field of requiredRootFields) {
+    if (!(field in normalized)) {
+      throw new Error(`Normalized analysis is missing required field: ${field}`);
+    }
+  }
+
+  if (!normalized.page || typeof normalized.page.url !== "string") {
+    throw new Error("Normalized analysis page context is invalid");
+  }
+
+  if (!["high", "medium", "low"].includes(normalized.confidence)) {
+    throw new Error("Normalized analysis confidence is invalid");
+  }
+}
+
 function appendNetworkEvent(tabId, event) {
   const existing = networkEventsByTab.get(tabId) ?? [];
   existing.push(event);
@@ -270,14 +422,25 @@ async function runAnalysisPipeline(requestId) {
 
   const succeeded = collectors.filter((collector) => collector.status === "success").length;
   const failed = collectors.length - succeeded;
+  const completedAt = new Date().toISOString();
+  const durationMs = Date.now() - startedAt;
+  const normalizedAnalysis = buildNormalizedAnalysis({
+    requestId,
+    tabContext,
+    collectors,
+    durationMs,
+    requestedAt,
+    completedAt
+  });
+  validateNormalizedAnalysis(normalizedAnalysis);
 
   return {
     ok: true,
     source: "background",
     requestId,
     requestedAt,
-    completedAt: new Date().toISOString(),
-    durationMs: Date.now() - startedAt,
+    completedAt,
+    durationMs,
     tab: {
       id: tabContext.tabId,
       url: tabContext.url,
@@ -289,7 +452,8 @@ async function runAnalysisPipeline(requestId) {
       total: collectors.length,
       succeeded,
       failed
-    }
+    },
+    normalizedAnalysis
   };
 }
 
