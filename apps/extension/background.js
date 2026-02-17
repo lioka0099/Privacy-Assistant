@@ -70,6 +70,15 @@ function toSafeNumber(value) {
   return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 
+function toSortedStringArray(value) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return [...value]
+    .filter((item) => typeof item === "string" && item.length > 0)
+    .sort((a, b) => a.localeCompare(b));
+}
+
 function buildNormalizedAnalysis({ requestId, tabContext, collectors, durationMs, requestedAt, completedAt }) {
   const contentPageSignals = getCollectorData(collectors, "contentPageSignals");
   const scriptSignals = getNestedCollectorData(contentPageSignals, "scriptSignals") ?? {};
@@ -103,9 +112,7 @@ function buildNormalizedAnalysis({ requestId, tabContext, collectors, durationMs
       totalScriptTagsWithSrc: toSafeNumber(scriptSignals.totalScriptTagsWithSrc),
       externalScriptCount: toSafeNumber(scriptSignals.externalScriptCount),
       thirdPartyScriptDomainCount: toSafeNumber(scriptSignals.thirdPartyScriptDomainCount),
-      thirdPartyScriptDomains: Array.isArray(scriptSignals.thirdPartyScriptDomains)
-        ? scriptSignals.thirdPartyScriptDomains
-        : []
+      thirdPartyScriptDomains: toSortedStringArray(scriptSignals.thirdPartyScriptDomains)
     },
     storageSignals: {
       localStorage: {
@@ -121,20 +128,14 @@ function buildNormalizedAnalysis({ requestId, tabContext, collectors, durationMs
       trackerDomainHitCount: toSafeNumber(trackingHeuristics.trackerDomainHitCount),
       endpointPatternHitCount: toSafeNumber(trackingHeuristics.endpointPatternHitCount),
       trackingQueryParamCount: toSafeNumber(trackingHeuristics.trackingQueryParamCount),
-      trackerDomainHits: Array.isArray(trackingHeuristics.trackerDomainHits)
-        ? trackingHeuristics.trackerDomainHits
-        : [],
-      trackingQueryParams: Array.isArray(trackingHeuristics.trackingQueryParams)
-        ? trackingHeuristics.trackingQueryParams
-        : []
+      trackerDomainHits: toSortedStringArray(trackingHeuristics.trackerDomainHits),
+      trackingQueryParams: toSortedStringArray(trackingHeuristics.trackingQueryParams)
     },
     cookieSignals: {
       totalCookieCount: toSafeNumber(cookieSignals.totalCookieCount),
       firstPartyCookieCount: toSafeNumber(cookieSignals.firstPartyCookieCount),
       thirdPartyCookieEstimateCount: toSafeNumber(cookieSignals.thirdPartyCookieEstimateCount),
-      thirdPartyCookieDomains: Array.isArray(cookieSignals.thirdPartyCookieDomains)
-        ? cookieSignals.thirdPartyCookieDomains
-        : []
+      thirdPartyCookieDomains: toSortedStringArray(cookieSignals.thirdPartyCookieDomains)
     },
     networkSignals: {
       observedWindowMs: toSafeNumber(networkSignals.observedWindowMs),
@@ -143,9 +144,7 @@ function buildNormalizedAnalysis({ requestId, tabContext, collectors, durationMs
       suspiciousEndpointHitCount: toSafeNumber(networkSignals.suspiciousEndpointHitCount),
       knownTrackerDomainHitCount: toSafeNumber(networkSignals.knownTrackerDomainHitCount),
       shortWindowBurstCount: toSafeNumber(networkSignals.shortWindowBurstCount),
-      knownTrackerDomains: Array.isArray(networkSignals.knownTrackerDomains)
-        ? networkSignals.knownTrackerDomains
-        : []
+      knownTrackerDomains: toSortedStringArray(networkSignals.knownTrackerDomains)
     },
     derived: {
       totalThirdPartySignals:
@@ -410,7 +409,68 @@ async function runAnalysisPipeline(requestId) {
   const requestedAt = new Date().toISOString();
   const startedAt = Date.now();
 
-  const tabContext = await getActiveTabContext();
+  let tabContext;
+  try {
+    tabContext = await getActiveTabContext();
+  } catch (error) {
+    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+    const fallbackTab = tabs[0];
+    const fallbackUrl = typeof fallbackTab?.url === "string" ? fallbackTab.url : "";
+    const fallbackHostname = isSupportedHttpUrl(fallbackUrl) ? new URL(fallbackUrl).hostname : "";
+    const completedAt = new Date().toISOString();
+    const durationMs = Date.now() - startedAt;
+
+    const normalizedAnalysis = buildNormalizedAnalysis({
+      requestId,
+      tabContext: {
+        tabId: typeof fallbackTab?.id === "number" ? fallbackTab.id : -1,
+        url: fallbackUrl,
+        hostname: fallbackHostname
+      },
+      collectors: [],
+      durationMs,
+      requestedAt,
+      completedAt
+    });
+    validateNormalizedAnalysis(normalizedAnalysis);
+
+    return {
+      ok: true,
+      source: "background",
+      requestId,
+      requestedAt,
+      completedAt,
+      durationMs,
+      tab: {
+        id: typeof fallbackTab?.id === "number" ? fallbackTab.id : null,
+        url: fallbackUrl,
+        hostname: fallbackHostname
+      },
+      status: "partial",
+      collectors: [],
+      summary: {
+        total: 0,
+        succeeded: 0,
+        failed: 0
+      },
+      warnings: [
+        {
+          code: "UNSUPPORTED_ACTIVE_TAB",
+          message: error instanceof Error ? error.message : "No supported active tab found"
+        }
+      ],
+      normalizedAnalysis: {
+        ...normalizedAnalysis,
+        confidence: "low",
+        sourceFlags: {
+          contentReachable: false,
+          contentSignalsAvailable: false,
+          cookieSignalsAvailable: false,
+          networkSignalsAvailable: false
+        }
+      }
+    };
+  }
 
   const collectors = await Promise.all([
     withTimeout("contentReachability", () => collectContentReachability(tabContext.tabId, requestId)),
