@@ -17,6 +17,10 @@ const ANALYSIS_TIMEOUT_MS = 1500;
 const NETWORK_WINDOW_MS = 30000;
 const MAX_TAB_NETWORK_EVENTS = 500;
 const networkEventsByTab = new Map();
+const networkCollectionState = {
+  listenerReady: false,
+  unavailableReason: null
+};
 
 chrome.runtime.onInstalled.addListener(() => {
   console.log("Privacy Assistant installed");
@@ -66,6 +70,13 @@ function calculateConfidence(collectors) {
   return "low";
 }
 
+function degradeConfidence(baseConfidence) {
+  if (baseConfidence === "high") {
+    return "medium";
+  }
+  return "low";
+}
+
 function toSafeNumber(value) {
   return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
@@ -87,6 +98,8 @@ function buildNormalizedAnalysis({ requestId, tabContext, collectors, durationMs
   const pageContext = getNestedCollectorData(contentPageSignals, "pageContext") ?? {};
   const cookieSignals = getCollectorData(collectors, "cookieSignals") ?? {};
   const networkSignals = getCollectorData(collectors, "networkRequestSignals") ?? {};
+  const networkSignalsAvailable = Boolean(networkSignals) && networkSignals.available !== false;
+  const baseConfidence = calculateConfidence(collectors);
 
   const normalized = {
     requestId,
@@ -106,7 +119,7 @@ function buildNormalizedAnalysis({ requestId, tabContext, collectors, durationMs
       contentReachable: Boolean(getCollectorData(collectors, "contentReachability")?.reachable),
       contentSignalsAvailable: Boolean(contentPageSignals),
       cookieSignalsAvailable: Boolean(getCollectorData(collectors, "cookieSignals")),
-      networkSignalsAvailable: Boolean(getCollectorData(collectors, "networkRequestSignals"))
+      networkSignalsAvailable
     },
     scriptSignals: {
       totalScriptTagsWithSrc: toSafeNumber(scriptSignals.totalScriptTagsWithSrc),
@@ -138,6 +151,8 @@ function buildNormalizedAnalysis({ requestId, tabContext, collectors, durationMs
       thirdPartyCookieDomains: toSortedStringArray(cookieSignals.thirdPartyCookieDomains)
     },
     networkSignals: {
+      available: networkSignalsAvailable,
+      unavailableReason: networkSignalsAvailable ? null : networkSignals.unavailableReason ?? "UNKNOWN",
       observedWindowMs: toSafeNumber(networkSignals.observedWindowMs),
       totalObservedRequests: toSafeNumber(networkSignals.totalObservedRequests),
       thirdPartyRequestCount: toSafeNumber(networkSignals.thirdPartyRequestCount),
@@ -158,7 +173,7 @@ function buildNormalizedAnalysis({ requestId, tabContext, collectors, durationMs
         toSafeNumber(networkSignals.suspiciousEndpointHitCount) +
         toSafeNumber(networkSignals.knownTrackerDomainHitCount)
     },
-    confidence: calculateConfidence(collectors)
+    confidence: networkSignalsAvailable ? baseConfidence : degradeConfidence(baseConfidence)
   };
 
   return normalized;
@@ -199,25 +214,33 @@ function appendNetworkEvent(tabId, event) {
   networkEventsByTab.set(tabId, filtered);
 }
 
-chrome.webRequest.onBeforeRequest.addListener(
-  (details) => {
-    if (typeof details.tabId !== "number" || details.tabId < 0) {
-      return;
-    }
-    if (!isSupportedHttpUrl(details.url)) {
-      return;
-    }
+try {
+  chrome.webRequest.onBeforeRequest.addListener(
+    (details) => {
+      if (typeof details.tabId !== "number" || details.tabId < 0) {
+        return;
+      }
+      if (!isSupportedHttpUrl(details.url)) {
+        return;
+      }
 
-    appendNetworkEvent(details.tabId, {
-      timestampMs: Date.now(),
-      url: details.url,
-      requestHost: parseHostnameFromUrl(details.url),
-      initiatorHost: details.initiator ? parseHostnameFromUrl(details.initiator) : "",
-      type: details.type
-    });
-  },
-  { urls: ["http://*/*", "https://*/*"] }
-);
+      appendNetworkEvent(details.tabId, {
+        timestampMs: Date.now(),
+        url: details.url,
+        requestHost: parseHostnameFromUrl(details.url),
+        initiatorHost: details.initiator ? parseHostnameFromUrl(details.initiator) : "",
+        type: details.type
+      });
+    },
+    { urls: ["http://*/*", "https://*/*"] }
+  );
+  networkCollectionState.listenerReady = true;
+  networkCollectionState.unavailableReason = null;
+} catch (error) {
+  networkCollectionState.listenerReady = false;
+  networkCollectionState.unavailableReason =
+    error instanceof Error ? error.message : "webRequest listener setup failed";
+}
 
 async function collectCookieSignals(tabContext) {
   const cookies = await chrome.cookies.getAll({ url: tabContext.url });
@@ -249,6 +272,21 @@ async function collectCookieSignals(tabContext) {
 }
 
 async function collectNetworkRequestSignals(tabContext) {
+  if (!networkCollectionState.listenerReady) {
+    return {
+      available: false,
+      unavailableReason:
+        networkCollectionState.unavailableReason ?? "WEBREQUEST_LISTENER_UNAVAILABLE",
+      observedWindowMs: NETWORK_WINDOW_MS,
+      totalObservedRequests: 0,
+      thirdPartyRequestCount: 0,
+      suspiciousEndpointHitCount: 0,
+      knownTrackerDomainHitCount: 0,
+      knownTrackerDomains: [],
+      shortWindowBurstCount: 0
+    };
+  }
+
   const events = networkEventsByTab.get(tabContext.tabId) ?? [];
   const firstPartyHost = tabContext.hostname;
   const now = Date.now();
@@ -282,6 +320,8 @@ async function collectNetworkRequestSignals(tabContext) {
   ).length;
 
   return {
+    available: true,
+    unavailableReason: null,
     observedWindowMs: NETWORK_WINDOW_MS,
     totalObservedRequests: recentEvents.length,
     thirdPartyRequestCount,
@@ -493,6 +533,15 @@ async function runAnalysisPipeline(requestId) {
     completedAt
   });
   validateNormalizedAnalysis(normalizedAnalysis);
+  const warnings = [];
+  if (!normalizedAnalysis.sourceFlags.networkSignalsAvailable) {
+    warnings.push({
+      code: "NETWORK_SIGNALS_UNAVAILABLE",
+      message:
+        normalizedAnalysis.networkSignals.unavailableReason ??
+        "Network signal collection is unavailable"
+    });
+  }
 
   return {
     ok: true,
@@ -513,6 +562,7 @@ async function runAnalysisPipeline(requestId) {
       succeeded,
       failed
     },
+    warnings,
     normalizedAnalysis
   };
 }
