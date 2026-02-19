@@ -8,6 +8,11 @@ export {
   clampPrivacyScore
 } from "./scoring/privacyScore";
 export { RISK_RULESET_VERSION, detectRisks } from "./risks/detectRisks";
+export {
+  CONFIDENCE_RULESET_VERSION,
+  createPrivacyScoredOutput,
+  deriveConfidence
+} from "./confidence/deriveConfidence";
 export { generateRecommendations } from "./recommendations/generateRecommendations";
 export type {
   ConfidenceLevel,
@@ -20,6 +25,12 @@ export type {
   ScoreReason,
   ScoreUnit
 } from "./scoring/privacyScore";
+export type {
+  ConfidenceAssessment,
+  ConfidenceReason,
+  ConfidenceReasonCode,
+  PrivacyScoredOutput
+} from "./confidence/deriveConfidence";
 export type {
   MitigationPriority,
   OverallRiskLevel,

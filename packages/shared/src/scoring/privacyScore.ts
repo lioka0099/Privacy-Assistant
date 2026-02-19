@@ -59,6 +59,12 @@ export type PrivacyScoreComputation = {
 };
 
 export type NormalizedAnalysisInput = {
+  sourceFlags: {
+    contentReachable: boolean;
+    contentSignalsAvailable: boolean;
+    cookieSignalsAvailable: boolean;
+    networkSignalsAvailable: boolean;
+  };
   scriptSignals: {
     thirdPartyScriptDomainCount: number;
     externalScriptCount: number;
@@ -84,6 +90,7 @@ export type NormalizedAnalysisInput = {
   };
   networkSignals: {
     available: boolean;
+    unavailableReason?: string | null;
     thirdPartyRequestCount: number;
     suspiciousEndpointHitCount: number;
     knownTrackerDomainHitCount: number;
