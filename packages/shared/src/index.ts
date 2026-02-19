@@ -8,6 +8,7 @@ export {
   clampPrivacyScore
 } from "./scoring/privacyScore";
 export { RISK_RULESET_VERSION, detectRisks } from "./risks/detectRisks";
+export { generateRecommendations } from "./recommendations/generateRecommendations";
 export type {
   ConfidenceLevel,
   NormalizedAnalysisInput,
@@ -29,3 +30,9 @@ export type {
   RiskRuleSource,
   RiskSeverity
 } from "./risks/detectRisks";
+export type {
+  Recommendation,
+  RecommendationActionId,
+  RecommendationCatalogItem,
+  RecommendationOutput
+} from "./recommendations/generateRecommendations";
