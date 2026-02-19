@@ -37,6 +37,8 @@ export type RiskDetectionOutput = {
   overallRisk: OverallRiskLevel;
   overallExplanation: string;
   mappingFallbackUsed: boolean;
+  networkFallbackUsed: boolean;
+  networkUnavailableReason: string | null;
   riskItems: readonly RiskItem[];
 };
 
@@ -254,10 +256,31 @@ function resolveOverallRisk(score: number): { band: ScoreBand; fallbackUsed: boo
   return { band: OVERALL_RISK_FALLBACK, fallbackUsed: true };
 }
 
+function createNetworkUnavailableRisk(input: RiskDetectionInput): RiskItem {
+  return {
+    id: "network_signals_unavailable",
+    title: "Network signal analysis unavailable",
+    explanation: input.normalized.networkSignals.unavailableReason
+      ? `Network-based risk checks were skipped: ${input.normalized.networkSignals.unavailableReason}.`
+      : "Network-based risk checks were skipped because network signals are unavailable.",
+    severity: "low",
+    mitigationPriority: "p3",
+    source: "network",
+    metric: "networkSignals.available",
+    operator: "<",
+    threshold: 1,
+    actualValue: 0
+  };
+}
+
 export function detectRisks(input: RiskDetectionInput): RiskDetectionOutput {
   const overall = resolveOverallRisk(input.score);
+  const networkSignalsAvailable = input.normalized.networkSignals.available;
 
   const riskItems = RISK_RULES.flatMap((rule): RiskItem[] => {
+    if (rule.source === "network" && !networkSignalsAvailable) {
+      return [];
+    }
     const actualValue = rule.getActualValue(input);
     if (!compareThreshold(actualValue, rule.operator, rule.threshold)) {
       return [];
@@ -277,12 +300,19 @@ export function detectRisks(input: RiskDetectionInput): RiskDetectionOutput {
       }
     ];
   });
+  if (!networkSignalsAvailable) {
+    riskItems.push(createNetworkUnavailableRisk(input));
+  }
 
   return {
     rulesetVersion: RISK_RULESET_VERSION,
     overallRisk: overall.band.level,
     overallExplanation: overall.band.explanation,
     mappingFallbackUsed: overall.fallbackUsed,
+    networkFallbackUsed: !networkSignalsAvailable,
+    networkUnavailableReason: networkSignalsAvailable
+      ? null
+      : input.normalized.networkSignals.unavailableReason ?? null,
     riskItems
   };
 }
