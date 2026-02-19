@@ -7,6 +7,7 @@ export {
   computePrivacyScore,
   clampPrivacyScore
 } from "./scoring/privacyScore";
+export { RISK_RULESET_VERSION, detectRisks } from "./risks/detectRisks";
 export type {
   ConfidenceLevel,
   NormalizedAnalysisInput,
@@ -18,3 +19,13 @@ export type {
   ScoreReason,
   ScoreUnit
 } from "./scoring/privacyScore";
+export type {
+  MitigationPriority,
+  OverallRiskLevel,
+  RiskDetectionInput,
+  RiskDetectionOutput,
+  RiskItem,
+  RiskMetricOperator,
+  RiskRuleSource,
+  RiskSeverity
+} from "./risks/detectRisks";
