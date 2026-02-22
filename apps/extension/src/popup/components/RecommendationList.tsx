@@ -1,6 +1,10 @@
 import type { PopupAnalysisViewModel } from "../../shared/messages";
+import type { RecommendationActionId } from "@shared/index";
 
-export function renderRecommendationList(analysis: PopupAnalysisViewModel): string {
+export function renderRecommendationList(
+  analysis: PopupAnalysisViewModel,
+  selectedActionIds: readonly RecommendationActionId[]
+): string {
   const recommendations = analysis.recommendations;
   if (recommendations.length === 0) {
     return `
@@ -21,6 +25,7 @@ export function renderRecommendationList(analysis: PopupAnalysisViewModel): stri
               name="recommendation"
               value="${recommendation.actionId}"
               data-action-id="${recommendation.actionId}"
+              ${selectedActionIds.includes(recommendation.actionId) ? "checked" : ""}
             />
             <span>${recommendation.title}</span>
           </label>

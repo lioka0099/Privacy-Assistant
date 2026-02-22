@@ -1,4 +1,5 @@
 import type { PopupAnalysisViewModel } from "../shared/messages";
+import type { ImprovePrivacyPanelState } from "./components/ImprovePrivacyPanel";
 import { renderImprovePrivacyPanel } from "./components/ImprovePrivacyPanel";
 import { renderRiskList } from "./components/RiskList";
 import { renderScoreCard } from "./components/ScoreCard";
@@ -12,11 +13,14 @@ function renderDomainHeader(analysis: PopupAnalysisViewModel): string {
   `;
 }
 
-export function renderPopupApp(analysis: PopupAnalysisViewModel): string {
+export function renderPopupApp(
+  analysis: PopupAnalysisViewModel,
+  improvePrivacyPanelState: ImprovePrivacyPanelState
+): string {
   const domainHeader = renderDomainHeader(analysis);
   const scoreCard = renderScoreCard(analysis);
   const riskList = renderRiskList(analysis);
-  const improvePrivacyPanel = renderImprovePrivacyPanel(analysis);
+  const improvePrivacyPanel = renderImprovePrivacyPanel(analysis, improvePrivacyPanelState);
 
   return `
     <main class="popup-app">
