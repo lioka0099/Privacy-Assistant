@@ -10,7 +10,10 @@
     "dev": "echo \"shared dev not required\"",
     "build": "echo \"shared build setup in step 1.2\"",
     "lint": "echo \"shared lint setup deferred\"",
-    "test": "echo \"shared tests setup deferred\"",
+    "test": "vitest run --pool=threads",
     "typecheck": "tsc -p tsconfig.json"
+  },
+  "devDependencies": {
+    "vitest": "^4.0.18"
   }
 }
