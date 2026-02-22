@@ -14,13 +14,21 @@ import {
 } from "./messages.js";
 
 const ANALYSIS_TIMEOUT_MS = 1500;
-const NETWORK_WINDOW_MS = 30000;
+const NETWORK_WINDOW_MS = 60000;
+const NETWORK_BURST_WINDOW_MS = 5000;
 const MAX_TAB_NETWORK_EVENTS = 500;
 const networkEventsByTab = new Map();
 const networkCollectionState = {
   listenerReady: false,
   unavailableReason: null
 };
+
+function clearTabNetworkEvents(tabId) {
+  if (typeof tabId !== "number" || tabId < 0) {
+    return;
+  }
+  networkEventsByTab.delete(tabId);
+}
 
 chrome.runtime.onInstalled.addListener(() => {
   console.log("Privacy Assistant installed");
@@ -90,6 +98,20 @@ function toSortedStringArray(value) {
     .sort((a, b) => a.localeCompare(b));
 }
 
+function sanitizeCountedItems(value, keyName) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .filter((item) => item && typeof item === "object")
+    .map((item) => {
+      const key = typeof item[keyName] === "string" ? item[keyName] : "";
+      const count = typeof item.count === "number" && Number.isFinite(item.count) ? item.count : 0;
+      return { [keyName]: key, count };
+    })
+    .filter((item) => item[keyName].length > 0 && item.count > 0);
+}
+
 function buildNormalizedAnalysis({ requestId, tabContext, collectors, durationMs, requestedAt, completedAt }) {
   const contentPageSignals = getCollectorData(collectors, "contentPageSignals");
   const scriptSignals = getNestedCollectorData(contentPageSignals, "scriptSignals") ?? {};
@@ -156,7 +178,12 @@ function buildNormalizedAnalysis({ requestId, tabContext, collectors, durationMs
       observedWindowMs: toSafeNumber(networkSignals.observedWindowMs),
       totalObservedRequests: toSafeNumber(networkSignals.totalObservedRequests),
       thirdPartyRequestCount: toSafeNumber(networkSignals.thirdPartyRequestCount),
+      thirdPartyTopHosts: sanitizeCountedItems(networkSignals.thirdPartyTopHosts, "host"),
       suspiciousEndpointHitCount: toSafeNumber(networkSignals.suspiciousEndpointHitCount),
+      suspiciousEndpointPatternCounts: sanitizeCountedItems(
+        networkSignals.suspiciousEndpointPatternCounts,
+        "pattern"
+      ),
       knownTrackerDomainHitCount: toSafeNumber(networkSignals.knownTrackerDomainHitCount),
       shortWindowBurstCount: toSafeNumber(networkSignals.shortWindowBurstCount),
       knownTrackerDomains: toSortedStringArray(networkSignals.knownTrackerDomains)
@@ -280,7 +307,9 @@ async function collectNetworkRequestSignals(tabContext) {
       observedWindowMs: NETWORK_WINDOW_MS,
       totalObservedRequests: 0,
       thirdPartyRequestCount: 0,
+      thirdPartyTopHosts: [],
       suspiciousEndpointHitCount: 0,
+      suspiciousEndpointPatternCounts: [],
       knownTrackerDomainHitCount: 0,
       knownTrackerDomains: [],
       shortWindowBurstCount: 0
@@ -294,16 +323,24 @@ async function collectNetworkRequestSignals(tabContext) {
 
   let thirdPartyRequestCount = 0;
   let suspiciousEndpointHitCount = 0;
+  const thirdPartyHostCounts = new Map();
+  const suspiciousPatternCounts = new Map();
   const trackerDomainMatches = new Set();
 
   for (const event of recentEvents) {
     if (isThirdPartyHost(event.requestHost, firstPartyHost)) {
       thirdPartyRequestCount += 1;
+      const existingCount = thirdPartyHostCounts.get(event.requestHost) ?? 0;
+      thirdPartyHostCounts.set(event.requestHost, existingCount + 1);
     }
 
     const urlLower = event.url.toLowerCase();
-    if (SUSPICIOUS_ENDPOINT_PATTERNS.some((pattern) => urlLower.includes(pattern))) {
-      suspiciousEndpointHitCount += 1;
+    for (const pattern of SUSPICIOUS_ENDPOINT_PATTERNS) {
+      if (urlLower.includes(pattern)) {
+        suspiciousEndpointHitCount += 1;
+        const existingCount = suspiciousPatternCounts.get(pattern) ?? 0;
+        suspiciousPatternCounts.set(pattern, existingCount + 1);
+      }
     }
 
     const hostLower = event.requestHost.toLowerCase();
@@ -314,22 +351,35 @@ async function collectNetworkRequestSignals(tabContext) {
     }
   }
 
-  const recentWindowStart = now - 5000;
+  const recentWindowStart = now - NETWORK_BURST_WINDOW_MS;
   const shortWindowCount = recentEvents.filter(
     (event) => event.timestampMs >= recentWindowStart
   ).length;
 
-  return {
+  const thirdPartyTopHosts = Array.from(thirdPartyHostCounts.entries())
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .slice(0, 5)
+    .map(([host, count]) => ({ host, count }));
+
+  const suspiciousEndpointPatternCounts = Array.from(suspiciousPatternCounts.entries())
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .slice(0, 5)
+    .map(([pattern, count]) => ({ pattern, count }));
+
+  const payload = {
     available: true,
     unavailableReason: null,
     observedWindowMs: NETWORK_WINDOW_MS,
     totalObservedRequests: recentEvents.length,
     thirdPartyRequestCount,
+    thirdPartyTopHosts,
     suspiciousEndpointHitCount,
+    suspiciousEndpointPatternCounts,
     knownTrackerDomainHitCount: trackerDomainMatches.size,
     knownTrackerDomains: Array.from(trackerDomainMatches),
     shortWindowBurstCount: shortWindowCount
   };
+  return payload;
 }
 
 /**
@@ -511,7 +561,6 @@ async function runAnalysisPipeline(requestId) {
       }
     };
   }
-
   const collectors = await Promise.all([
     withTimeout("contentReachability", () => collectContentReachability(tabContext.tabId, requestId)),
     withTimeout("contentPageSignals", () => collectPageSignalsFromContent(tabContext.tabId, requestId)),
@@ -567,6 +616,229 @@ async function runAnalysisPipeline(requestId) {
   };
 }
 
+function normalizeCookieDomain(domain) {
+  if (typeof domain !== "string") {
+    return "";
+  }
+  return domain.replace(/^\./, "").toLowerCase().trim();
+}
+
+function toCookieRemovalUrl(cookie) {
+  const normalizedDomain = normalizeCookieDomain(cookie?.domain ?? "");
+  if (!normalizedDomain) {
+    return null;
+  }
+  const scheme = cookie?.secure ? "https" : "http";
+  const path = typeof cookie?.path === "string" && cookie.path.startsWith("/") ? cookie.path : "/";
+  return `${scheme}://${normalizedDomain}${path}`;
+}
+
+function openSettingsTabForAction(actionId, targetUrl) {
+  return chrome.tabs.create({ url: targetUrl });
+}
+
+function toSettingsSiteDetailsUrl(tabContext) {
+  const rawUrl = typeof tabContext?.url === "string" ? tabContext.url : "";
+  if (!isSupportedHttpUrl(rawUrl)) {
+    return null;
+  }
+  try {
+    const parsed = new URL(rawUrl);
+    return `chrome://settings/content/siteDetails?site=${encodeURIComponent(parsed.origin)}`;
+  } catch {
+    return null;
+  }
+}
+
+async function clearCookiesForTabContext(tabContext, mode) {
+  if (!tabContext || !tabContext.url || !tabContext.hostname) {
+    return { eligibleCount: 0, removedCount: 0, failedCount: 0 };
+  }
+
+  const cookies = await chrome.cookies.getAll({ url: tabContext.url });
+  let eligibleCount = 0;
+  let removedCount = 0;
+  let failedCount = 0;
+
+  for (const cookie of cookies) {
+    const cookieDomain = normalizeCookieDomain(cookie.domain ?? "");
+    if (
+      mode === "third_party_only" &&
+      !isThirdPartyHost(cookieDomain, tabContext.hostname)
+    ) {
+      continue;
+    }
+
+    eligibleCount += 1;
+    const removalUrl = toCookieRemovalUrl(cookie);
+    if (!removalUrl) {
+      failedCount += 1;
+      continue;
+    }
+
+    try {
+      const removed = await chrome.cookies.remove({
+        url: removalUrl,
+        name: cookie.name,
+        storeId: cookie.storeId
+      });
+      if (removed) {
+        removedCount += 1;
+      } else {
+        failedCount += 1;
+      }
+    } catch {
+      failedCount += 1;
+    }
+  }
+
+  return { eligibleCount, removedCount, failedCount };
+}
+
+async function executeImproveAction(actionId, tabContext) {
+  if (actionId === "reduce_third_party_cookies") {
+    const summary = await clearCookiesForTabContext(tabContext, "third_party_only");
+    if (summary.eligibleCount === 0) {
+      return {
+        actionId,
+        status: "skipped",
+        message: "No third-party cookies were eligible for removal on this page."
+      };
+    }
+    if (summary.removedCount > 0) {
+      return {
+        actionId,
+        status: "success",
+        message: `Removed ${summary.removedCount} third-party cookie(s).`
+      };
+    }
+    await openSettingsTabForAction(actionId, "chrome://settings/cookies");
+    return {
+      actionId,
+      status: "success",
+      message:
+        "Automatic cookie cleanup was limited. Opened Cookies settings. Steps: 1) Block third-party cookies, 2) Clear site data if needed."
+    };
+  }
+
+  if (actionId === "clear_site_storage_data") {
+    const summary = await clearCookiesForTabContext(tabContext, "all_current_site");
+    if (summary.eligibleCount === 0) {
+      await openSettingsTabForAction(actionId, "chrome://settings/siteData");
+      return {
+        actionId,
+        status: "success",
+        message:
+          "No removable cookies were found automatically. Opened site-data settings. Steps: 1) Search this domain, 2) Remove stored data."
+      };
+    }
+    if (summary.removedCount > 0) {
+      return {
+        actionId,
+        status: "success",
+        message:
+          `Cleared ${summary.removedCount} site cookie(s). ` +
+          "If needed, open site-data settings to remove remaining storage."
+      };
+    }
+    await openSettingsTabForAction(actionId, "chrome://settings/siteData");
+    return {
+      actionId,
+      status: "success",
+      message:
+        "Automatic site-data cleanup was limited. Opened site-data settings. Steps: 1) Search this domain, 2) Remove remaining data."
+    };
+  }
+
+  if (actionId === "review_tracking_permissions") {
+    const siteDetailsUrl = toSettingsSiteDetailsUrl(tabContext);
+    await openSettingsTabForAction(
+      actionId,
+      siteDetailsUrl ?? "chrome://settings/content/all"
+    );
+    return {
+      actionId,
+      status: "success",
+      message:
+        "Opened this site's permission details. Steps: 1) Review this site permissions, 2) restrict tracking-related access."
+    };
+  }
+
+  if (actionId === "harden_network_privacy") {
+    await openSettingsTabForAction(actionId, "chrome://settings/security");
+    return {
+      actionId,
+      status: "success",
+      message:
+        "Opened security settings. Steps: 1) Use Enhanced protection, 2) Review secure DNS and privacy controls."
+    };
+  }
+
+  if (actionId === "limit_third_party_scripts") {
+    await openSettingsTabForAction(actionId, "chrome://settings/content/javascript");
+    return {
+      actionId,
+      status: "success",
+      message:
+        "Opened JavaScript settings. Steps: 1) Restrict JavaScript for high-risk sites, 2) Use per-site blocking for untrusted domains."
+    };
+  }
+
+  if (actionId === "block_known_trackers") {
+    await openSettingsTabForAction(actionId, "chrome://settings/cookies");
+    return {
+      actionId,
+      status: "success",
+      message:
+        "Opened Cookies settings. Enable third-party cookie blocking to reduce tracker domains."
+    };
+  }
+
+  await openSettingsTabForAction(actionId, "chrome://settings/privacy");
+  return {
+    actionId,
+    status: "success",
+    message:
+      "Opened general privacy settings. Steps: 1) Review tracking-related controls, 2) tighten permissions for this site."
+  };
+}
+
+async function executeImproveActionQueue(selectedActionIds, tabContext) {
+  if (!Array.isArray(selectedActionIds)) {
+    return [];
+  }
+
+  const seen = new Set();
+  const orderedActionIds = [];
+  for (const actionId of selectedActionIds) {
+    if (typeof actionId !== "string" || seen.has(actionId)) {
+      continue;
+    }
+    seen.add(actionId);
+    orderedActionIds.push(actionId);
+  }
+
+  const results = [];
+  for (const actionId of orderedActionIds) {
+    try {
+      const result = await executeImproveAction(actionId, tabContext);
+      results.push(result);
+    } catch (error) {
+      results.push({
+        actionId,
+        status: "failed",
+        message: error instanceof Error ? error.message : "Action failed unexpectedly."
+      });
+    }
+  }
+  const anyActionApplied = results.some((result) => result.status === "success");
+  if (anyActionApplied && tabContext && typeof tabContext.tabId === "number") {
+    // Drop pre-action network history so post-action scoring reflects fresh traffic sooner.
+    clearTabNetworkEvents(tabContext.tabId);
+  }
+  return results;
+}
+
 /**
  * Runtime message router:
  * - PING: quick health response
@@ -593,6 +865,51 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       requestId: message.requestId ?? null
     });
     return;
+  }
+
+  if (message.type === MESSAGE_TYPES.EXECUTE_IMPROVE_PRIVACY_ACTIONS) {
+    const requestId = message.requestId ?? createRequestId("improve_privacy");
+    const selectedActionIds = Array.isArray(message.selectedActionIds)
+      ? message.selectedActionIds
+      : [];
+
+    (async () => {
+      try {
+        let tabContext = null;
+        try {
+          tabContext = await getActiveTabContext();
+        } catch {
+          tabContext = null;
+        }
+
+        const results = await executeImproveActionQueue(selectedActionIds, tabContext);
+        const refreshedAnalysis = await runAnalysisPipeline(createRequestId("analysis_refresh"));
+
+        sendResponse({
+          ok: true,
+          source: "background",
+          requestId,
+          payload: {
+            results,
+            refreshedAnalysis
+          }
+        });
+      } catch (error) {
+        sendResponse(
+          createErrorPayload({
+            source: "background",
+            requestId,
+            code: "EXECUTE_IMPROVE_PRIVACY_ACTIONS_FAILED",
+            error:
+              error instanceof Error
+                ? error.message
+                : "Failed to execute Improve Privacy actions"
+          })
+        );
+      }
+    })();
+
+    return true;
   }
 
   if (message.type !== MESSAGE_TYPES.RUN_ANALYSIS) {

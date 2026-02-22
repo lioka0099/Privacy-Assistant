@@ -119,9 +119,11 @@ async function reduceThirdPartyCookies(
     };
   }
 
+  await openSettingsPage("chrome://settings/content/cookies");
   return {
-    status: "failed",
-    message: "Could not remove third-party cookies for this site."
+    status: "success",
+    message:
+      "Automatic cookie cleanup was limited. Opened cookie settings. Steps: 1) Block third-party cookies, 2) Clear site data if needed."
   };
 }
 
@@ -137,9 +139,11 @@ async function clearSiteStorageData(
 
   const summary = await clearCookiesForCurrentSite(context, "all_current_site");
   if (summary.eligibleCount === 0) {
+    await openSettingsPage("chrome://settings/siteData");
     return {
-      status: "skipped",
-      message: "No site cookies were found to clear for this page."
+      status: "success",
+      message:
+        "No removable cookies were found automatically. Opened site-data settings. Steps: 1) Search this domain, 2) Remove stored data."
     };
   }
 
@@ -152,9 +156,11 @@ async function clearSiteStorageData(
     };
   }
 
+  await openSettingsPage("chrome://settings/siteData");
   return {
-    status: "failed",
-    message: "Could not clear current-site cookies."
+    status: "success",
+    message:
+      "Automatic site-data cleanup was limited. Opened site-data settings. Steps: 1) Search this domain, 2) Remove remaining data."
   };
 }
 
@@ -162,7 +168,8 @@ async function reviewTrackingPermissions(): Promise<ActionHandlerResult> {
   await openSettingsPage("chrome://settings/content/cookies");
   return {
     status: "success",
-    message: "Opened cookie and tracking permissions settings."
+    message:
+      "Opened cookie and tracking permission settings. Steps: 1) Block third-party cookies, 2) Review site permissions for this domain."
   };
 }
 
@@ -170,14 +177,26 @@ async function hardenNetworkPrivacy(): Promise<ActionHandlerResult> {
   await openSettingsPage("chrome://settings/security");
   return {
     status: "success",
-    message: "Opened browser security settings for network privacy hardening."
+    message:
+      "Opened security settings. Steps: 1) Use Enhanced protection, 2) Review secure DNS and privacy controls."
   };
 }
 
-function manualGuidanceResult(title: string): ActionHandlerResult {
+async function limitThirdPartyScriptsGuided(): Promise<ActionHandlerResult> {
+  await openSettingsPage("chrome://settings/content/javascript");
   return {
-    status: "skipped",
-    message: `${title} currently requires manual user action. Guided prompts will be added in the next step.`
+    status: "success",
+    message:
+      "Opened JavaScript settings. Steps: 1) Restrict JavaScript for high-risk sites, 2) Use per-site blocking for untrusted domains."
+  };
+}
+
+async function blockKnownTrackersGuided(): Promise<ActionHandlerResult> {
+  await openSettingsPage("chrome://settings/content/cookies");
+  return {
+    status: "success",
+    message:
+      "Opened Chrome cookie/tracking controls. Steps: 1) Block third-party cookies, 2) clear existing site data if needed."
   };
 }
 
@@ -186,9 +205,9 @@ export const improvePrivacyActionHandlers: Record<
   (context: ActionExecutionContext) => Promise<ActionHandlerResult> | ActionHandlerResult
 > = {
   reduce_third_party_cookies: reduceThirdPartyCookies,
-  limit_third_party_scripts: () => manualGuidanceResult("Limiting third-party scripts"),
+  limit_third_party_scripts: limitThirdPartyScriptsGuided,
   clear_site_storage_data: clearSiteStorageData,
-  block_known_trackers: () => manualGuidanceResult("Blocking known trackers"),
+  block_known_trackers: blockKnownTrackersGuided,
   review_tracking_permissions: reviewTrackingPermissions,
   harden_network_privacy: hardenNetworkPrivacy
 };

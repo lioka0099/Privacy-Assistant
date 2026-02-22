@@ -3,12 +3,55 @@
  * Collects page-level signals (scripts and storage) in a defensive way so
  * failures in one collector do not crash the full analysis response.
  */
-import {
-  KNOWN_TRACKER_DOMAIN_PATTERNS,
-  SUSPICIOUS_ENDPOINT_PATTERNS,
-  TRACKING_QUERY_PARAM_PATTERNS,
-  isThirdPartyHost
-} from "./messages.js";
+const KNOWN_TRACKER_DOMAIN_PATTERNS = Object.freeze([
+  "google-analytics.com",
+  "doubleclick.net",
+  "googletagmanager.com",
+  "facebook.net",
+  "connect.facebook.net",
+  "hotjar.com",
+  "segment.com",
+  "mixpanel.com"
+]);
+
+const SUSPICIOUS_ENDPOINT_PATTERNS = Object.freeze([
+  "collect",
+  "track",
+  "pixel",
+  "beacon",
+  "events"
+]);
+
+const TRACKING_QUERY_PARAM_PATTERNS = Object.freeze([
+  "utm_",
+  "fbclid",
+  "gclid",
+  "msclkid"
+]);
+
+function comparableDomain(hostname) {
+  if (typeof hostname !== "string") {
+    return "";
+  }
+  const clean = hostname.toLowerCase().trim().replace(/\.+$/, "").replace(/^\.+/, "");
+  if (!clean) {
+    return "";
+  }
+  const segments = clean.split(".").filter(Boolean);
+  if (segments.length <= 2) {
+    return clean;
+  }
+  return segments.slice(-2).join(".");
+}
+
+function isThirdPartyHost(targetHost, firstPartyHost) {
+  const target = comparableDomain(targetHost);
+  const firstParty = comparableDomain(firstPartyHost);
+  if (!target || !firstParty) {
+    return false;
+  }
+  return target !== firstParty;
+}
 
 const MESSAGE_TYPES = Object.freeze({
   PING_CONTENT: "PING_CONTENT",
