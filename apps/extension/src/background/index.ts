@@ -5,10 +5,12 @@ import {
   type ActionExecutionContext,
   type ImprovePrivacyActionHandlerRegistry
 } from "./improvePrivacy/actionQueue";
+import { createDefaultImprovePrivacyActionRegistry } from "./improvePrivacy/handlers";
 
 export const backgroundPlaceholderReady = true;
 
 let improvePrivacyActionRegistry: ImprovePrivacyActionHandlerRegistry = {};
+setImprovePrivacyActionRegistry(createDefaultImprovePrivacyActionRegistry());
 
 export function setImprovePrivacyActionRegistry(
   registry: ImprovePrivacyActionHandlerRegistry
