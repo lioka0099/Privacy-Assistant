@@ -1,294 +1,174 @@
-## Privacy Assistant
+# 🛡️ Privacy Assistant
 
-**Understand privacy risk on any page — in seconds.** Privacy Assistant is a local-only **Chrome Extension** that analyzes privacy-related signals on the current site and then guides you through practical “Improve Privacy” actions.
+> **Understand privacy risk on any page in seconds.**
 
-It’s built to feel like a real product: fast feedback, clear reasoning, and a transparent privacy model.
+Privacy Assistant is a **local-only Chrome Extension** that analyzes privacy signals on the current site and guides you through practical hardening actions. Built to feel like a real product: fast feedback, clear reasoning, and a transparent privacy model.
 
-### Why you’d use it
-
-- **Spot tracking exposure quickly**: third‑party scripts, cookies, suspicious endpoints, known tracker domains.
-- **Get actionable recommendations**: not just “this is risky”, but “here’s what to do next”.
-- **Stay in control**: actions run only when you click, are executed sequentially, and report `success` / `failed` / `skipped`.
-
-### What it is (and isn’t)
-
-- **Local-only**: runs entirely in your browser. No backend, no accounts, no analytics.
-- **Signal-based**: relies on heuristics and metadata. It does **not** inspect request bodies.
-- **MVP scope**: privacy *signals* + guidance (and limited automatic cleanup where Chrome allows it).
-
-### Highlights
-
-- **Instant scan of the current page** (popup opens → analysis runs automatically)
-- **Score + confidence label** so you know whether the result is based on complete signals
-- **Risk list with evidence** (sample script domains, top third‑party hosts, suspicious endpoint patterns)
-- **Recommendations you can actually act on** (checkboxes + clear rationale)
-- **Safe-by-default actions**: only run when you click; sequential execution; per-action results
+![Local only](https://img.shields.io/badge/local--only-no%20backend-6366f1?style=flat-square)
+![Manifest V3](https://img.shields.io/badge/Chrome-Manifest%20V3-4285F4?style=flat-square&logo=googlechrome&logoColor=white)
+![No analytics](https://img.shields.io/badge/analytics-none-10b981?style=flat-square)
 
 ---
 
-## Quick start (run locally from GitHub)
+## ✨ Why Privacy Assistant?
+
+| ✅ What it does | ❌ What it doesn't |
+|---|---|
+| Spots trackers, third-party scripts & suspicious endpoints | Send any data to a server |
+| Gives actionable next steps, not just warnings | Require an account or sign-in |
+| Runs actions only when you click, with per-action results | Inspect request bodies |
+| Scores your exposure with a confidence label | Run anything without your approval |
+
+---
+
+## 📸 Screenshots
+
+<table>
+  <tr>
+    <th>🔍 Risks & Evidence</th>
+    <th>💡 Recommendations</th>
+    <th>⚙️ Pre-action Confirmation</th>
+  </tr>
+  <tr>
+    <td><img src="images/Screenshot%202026-02-23%20at%2012.43.48.png" width="220" height="420" alt="Risks and evidence panel" /></td>
+    <td><img src="images/Screenshot%202026-02-23%20at%2012.44.15.png" width="220" height="420" alt="Recommendations panel" /></td>
+    <td><img src="images/Screenshot%202026-02-23%20at%2012.44.26.png" width="220" height="420" alt="Pre-action confirmation screen" /></td>
+  </tr>
+</table>
+
+---
+
+## 🚀 Quick Start
 
 ### Requirements
 
-- Node.js (modern LTS recommended)
-- pnpm (this repo uses `corepack` + pnpm workspace)
-- Google Chrome (Manifest V3 support)
+- **Node.js** — modern LTS recommended
+- **pnpm** — this repo uses `corepack` + pnpm workspace
+- **Google Chrome** — Manifest V3 support required
 
-### Install dependencies
-
-From repo root:
+### Install
 
 ```bash
 corepack pnpm install
 ```
 
-### Load the extension (unpacked)
+### Load the Extension
 
 1. Open `chrome://extensions`
-2. Enable **Developer mode** (top-right)
+2. Enable **Developer mode** (toggle, top-right)
 3. Click **Load unpacked**
-4. Select the folder: `apps/extension`
-5. Pin the extension (optional): toolbar → puzzle icon → pin “Privacy Assistant”
+4. Select the `apps/extension` folder
+5. *(Optional)* Pin it: toolbar → puzzle icon → pin **Privacy Assistant**
 
-### How to use (typical flow)
+### How to use
 
-1. Open any `http://` or `https://` page.
-2. Click the Privacy Assistant icon to open the popup.
-3. Review:
-   - a **privacy score** and a **confidence label** (high/medium/low)
-   - **risks** (with optional evidence/details)
-   - **recommendations** (checkboxes)
-4. Select one or more recommendations and click **Improve Privacy**.
-5. You’ll get per-action results and the extension re-runs analysis.
+1. Open any `http://` or `https://` page
+2. Click the **Privacy Assistant** icon to open the popup
+3. Review your **privacy score**, **confidence label**, and **risk list**
+4. Select one or more recommendations and click **Improve Privacy**
+5. View per-action results — the extension re-runs analysis automatically
 
-### Suggested pages to test on
-
-- A simple marketing site (usually “cleaner”)
-- A news site (often heavy third‑party scripts)
-- A site with ads/analytics dashboards (often triggers tracker heuristics)
+> 💡 **Good pages to test on:** a simple marketing site (usually clean), a news site (often heavy with third-party scripts), or an ad/analytics dashboard (frequently triggers tracker heuristics).
 
 ---
 
-## Trust & privacy model (how data is handled)
+## 📊 Understanding Your Score
 
-### Data handling guarantees
+The score (0–100) is computed deterministically from third-party scripts, estimated cookies, storage footprint, tracking heuristic indicators, and network suspiciousness.
 
-- **No data leaves your machine**.
-- Analysis results exist in-memory while the popup is open.
-- The popup stores a small amount of local UI state in **extension localStorage** (e.g. “acknowledged” guided actions). This does not write to website localStorage.
+| Score | Signal |
+|---|---|
+| 🟢 **80–100** | Relatively low tracking exposure |
+| 🟡 **60–79** | Moderate exposure - hardening opportunities likely |
+| 🔴 **0–59** | Higher exposure signals detected |
 
-### What network data means here
+### Confidence Label
 
-The extension uses `chrome.webRequest.onBeforeRequest` **metadata only**:
-
-- request URL
-- initiator (when available)
-- request type
-
-It does not read request bodies.
-
----
-
-## Permissions (what we request and why)
-
-See [apps/extension/manifest.json](apps/extension/manifest.json).
-
-- **`tabs`**: resolve the active tab URL/hostname and open Chrome settings pages (`chrome.tabs.create`).
-- **`cookies`**: read and (optionally) remove cookies for the current site.
-- **`webRequest`**: observe request metadata to derive network privacy signals.
-- **`host_permissions`** (`http://*/*`, `https://*/*`): required to run the content script on pages you visit.
-
-### Security notes
-
-- Popup uses external CSS (`popup.html` loads [apps/extension/popup.css](apps/extension/popup.css)); no inline `<style>` required.
-- Extension page CSP is explicitly set in `manifest.json` (`content_security_policy.extension_pages`).
-- Background/content message handlers validate message shape and return structured errors on unsupported message types.
+| Label | Meaning |
+|---|---|
+| 🔵 **High** | Content + cookie + network signals all available |
+| 🟡 **Medium** | Some signals missing (often network), results still useful |
+| ⚪ **Low** | Core signals unavailable (e.g. restricted page), treat as incomplete |
 
 ---
 
-## Product behavior (what you’ll see)
+## 🔧 "Improve Privacy" Actions
 
-### Privacy score (0–100)
+Actions run **sequentially** for predictability. A failure doesn't stop the queue - you get per action `success` / `failed` / `skipped` results. After the queue completes, analysis re-runs automatically.
 
-The popup computes a deterministic score from:
+```
+reduce_third_party_cookies     clear_site_storage_data
+block_known_trackers           review_tracking_permissions
+harden_network_privacy         limit_third_party_scripts
+```
 
-- third‑party script domains
-- estimated third‑party cookies
-- storage footprint (local + session)
-- tracking heuristic indicator count
-- network suspiciousness (scaled to a 5s‑equivalent based on observed window)
-
-### Risks
-
-The popup maps signals + thresholds into risk items with:
-
-- `title`, `severity` (`low`/`medium`/`high`), and a user explanation
-- optional details (evidence lines like sample domains and top hosts)
-
-### Recommendations
-
-Recommendations are generated by mapping risk IDs → action IDs, then shown as checkboxes.
-
-### How to interpret results
-
-- **Score bands** (rough guidance):
-  - **80–100**: relatively low tracking exposure compared to common patterns
-  - **60–79**: moderate exposure; you’ll usually see meaningful hardening opportunities
-  - **0–59**: higher exposure signals detected (many third parties, tracker-like endpoints, etc.)
-- **Confidence label**:
-  - **High**: content signals + cookie signals + network signals were available
-  - **Medium**: some signals were missing (often network signals), but analysis is still useful
-  - **Low**: core signals were unavailable (for example on restricted pages); treat results as incomplete
+> ⚠️ **Chrome limits what extensions can automate.** Some actions remove cookies directly, others open the relevant Chrome settings page for guided manual steps.
 
 ---
 
-## “Improve Privacy” actions (how it behaves)
-
-### Action IDs
-
-Action IDs are stable strings like:
-
-- `reduce_third_party_cookies`
-- `clear_site_storage_data`
-- `block_known_trackers`
-- `review_tracking_permissions`
-- `harden_network_privacy`
-- `limit_third_party_scripts`
-
-### Execution model
-
-- Actions run **sequentially** to keep behavior predictable.
-- Failures do not stop the queue; you get per-action results: `success` / `failed` / `skipped`.
-- After actions complete, the background re-runs analysis and the popup refreshes.
-
-### Limitations (important)
-
-Chrome limits what extensions can do automatically, especially around storage and site settings. Some actions therefore:
-
-- remove cookies where permitted
-- open relevant Chrome settings pages for guided manual steps
-
----
-
-## Architecture overview (runtime)
-
-High-level flow:
+## 🏗️ Architecture
 
 ```mermaid
 flowchart LR
-  popup[PopupUI] -->|RUN_ANALYSIS| bg[BackgroundServiceWorker]
-  bg -->|COLLECT_PAGE_SIGNALS| content[ContentScript]
+  popup[Popup UI] -->|RUN_ANALYSIS| bg[Background Service Worker]
+  bg -->|COLLECT_PAGE_SIGNALS| content[Content Script]
   content -->|page_signals| bg
   bg -->|normalized_analysis| popup
   popup -->|EXECUTE_IMPROVE_PRIVACY_ACTIONS| bg
-  bg -->|results+refreshed_analysis| popup
+  bg -->|results + refreshed_analysis| popup
 ```
 
-### What Chrome actually loads
+### Runtime Entrypoints (`apps/extension/`)
 
-`manifest.json` points to runtime entrypoints inside `apps/extension/`:
-
-- `background.js` (service worker module)
-- `content.js` (content script)
-- `popup.html` + `popup.js` + `popup.css` (popup UI)
-- `messages.js` (shared constants/helpers for popup/background)
-
-### Workspace layout
-
-- **`apps/extension/`**: unpacked Chrome extension (what users load).
-  - The runtime is implemented in plain JavaScript files in `apps/extension/` (as referenced by the manifest).
+| File | Role |
+|---|---|
+| `background.js` | Service worker — orchestrates analysis and actions |
+| `content.js` | Content script — collects DOM and storage signals |
+| `popup.html / popup.js / popup.css` | Extension popup UI |
+| `messages.js` | Shared message constants and helpers |
 
 ---
 
-## What the extension collects (signals)
+## 🔬 Signals Collected
 
-### Content script signals (`apps/extension/content.js`)
+### Content Script (`content.js`)
+- **Scripts** - counts and third-party domain detection; sample list of external scripts
+- **Storage** - localStorage/sessionStorage size estimates
+- **Tracking heuristics** - known tracker domains (GA, DoubleClick, GTM, FB, etc.), suspicious endpoint substrings (`collect`, `track`, `pixel`, `beacon`, `events`), tracking query params (`utm_`, `fbclid`, `gclid`, etc.)
 
-Collected from the page DOM and browser APIs available in content scripts:
-
-- **Script signals**
-  - counts `script[src]`
-  - detects third‑party script domains (relative to the current site)
-  - returns a sample list of external scripts
-- **Storage signals**
-  - estimates size of localStorage/sessionStorage by key/value length
-- **Tracking heuristics**
-  - known tracker-domain patterns (e.g. GA, DoubleClick, GTM, FB, etc.)
-  - suspicious endpoint substrings (`collect`, `track`, `pixel`, `beacon`, `events`)
-  - tracking query params in the page URL (e.g. `utm_`, `fbclid`, `gclid`, etc.)
-
-### Background signals (`apps/extension/background.js`)
-
-- **Cookie signals**
-  - reads cookies for the current site via `chrome.cookies.getAll({ url })`
-  - estimates third‑party cookie presence by sampling top observed third‑party request hosts and querying cookie state for those hosts (heuristic)
-- **Network request signals**
-  - buffers recent webRequest metadata per tab for the last ~60s
-  - derives:
-    - third-party request count
-    - suspicious endpoint hit counts
-    - known tracker-domain matches
-    - a short-window “burst” metric
+### Background (`background.js`)
+- **Cookies** - reads first-party cookies via `chrome.cookies.getAll`; estimates third-party presence by sampling top observed third-party hosts
+- **Network requests** - buffers `webRequest` metadata per tab for the last ~60s; derives third-party request count, suspicious endpoint hits, tracker-domain matches, and a short-window burst metric
 
 ---
 
-## Development (scripts + quality gates)
+## 🔒 Privacy & Data Handling
 
-From repo root:
-
-```bash
-corepack pnpm lint
-corepack pnpm typecheck
-corepack pnpm test
-```
-
-- **lint**: ESLint across workspace (`eslint.config.js`)
-- **typecheck**: TypeScript configuration/type checks (note: the shipped extension runtime is JavaScript)
-- **test**: currently a placeholder for the extension app (see `apps/extension/package.json`)
-
-### Current test state
-
-This repo currently does not ship automated extension tests. If you want a strict “release gate”, use:
-
-- `pnpm lint`
-- `pnpm typecheck`
-- a manual smoke run (load unpacked → run analysis → run Improve Privacy once)
+- 🚫 **No data leaves your machine.** No backend, no accounts, no analytics.
+- 🧠 Analysis results exist in memory while the popup is open.
+- 💾 A small amount of UI state is persisted in **extension localStorage** (e.g. acknowledged guided actions) - separate from website localStorage and never shared.
+- 👁️ The extension uses `chrome.webRequest` for **request metadata only** (URL, initiator, type). Request bodies are never read.
 
 ---
 
-## Troubleshooting
+## 🔑 Permissions
 
-- **Popup says “No supported active tab found”**:
-  - You’re on a restricted page (`chrome://`, Chrome Web Store) or no active HTTP(S) tab exists.
-  - Open a normal `https://` webpage and try again.
-
-- **Content script unreachable**:
-  - Reload the page.
-  - Reload the extension from `chrome://extensions`.
-
-- **Network signals unavailable**:
-  - Some Chrome environments restrict `webRequest` collection; the extension degrades confidence and continues.
+| Permission | Why it's needed |
+|---|---|
+| `tabs` | Resolve the active tab URL and open Chrome settings pages |
+| `cookies` | Read and optionally remove cookies for the current site |
+| `webRequest` | Observe request metadata for network privacy signals |
+| `host_permissions` | Run the content script on `http://` and `https://` pages you visit |
 
 ---
 
-## FAQ
+## 🛠️ Troubleshooting
 
-### Why does “third-party cookies” sometimes show 0?
+**"No supported active tab found"**
+You're on a restricted page (`chrome://`, Chrome Web Store) or there's no active HTTP(S) tab. Open a normal `https://` page and try again.
 
-Browsers don’t expose a perfect “third-party cookies for this page” number. This extension uses a **best-effort heuristic** (based on the page’s observed third-party network hosts and cookie state), so a 0 can mean:
+**"Content script unreachable"**
+Reload the page, then reload the extension from `chrome://extensions`.
 
-- the page didn’t contact third-party hosts recently (within the observed window), or
-- those hosts didn’t have cookies set in your browser, or
-- network signals were unavailable (restricted environment).
-
-### Is the score guaranteed to be accurate?
-
-No—this is a privacy signal analyzer. It’s designed to be **directionally useful and explainable**, not a definitive measurement tool. Treat it as a fast “risk radar” and use the evidence details to decide what to do next.
-
----
-
-## Roadmap (suggested next steps)
-
-- Make results more explainable (per-factor breakdown + stronger evidence snapshots)
-- Add a short “privacy timeline” view from the last 60s of network signals
-- Add a proper license (`LICENSE`) before publishing publicly on GitHub
+**Network signals unavailable**
+Some Chrome environments restrict `webRequest` collection. The extension degrades gracefully to a lower confidence label and continues.
