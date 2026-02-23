@@ -55,6 +55,53 @@ function buildRiskDetails(...lines) {
     .slice(0, 6);
 }
 
+function toActionDisplayLabel(actionId) {
+  if (typeof actionId !== "string" || actionId.length === 0) {
+    return "Unknown action";
+  }
+  return actionId
+    .split("_")
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function getSeverityClass(severity) {
+  if (severity === "high") {
+    return "severity-high";
+  }
+  if (severity === "medium") {
+    return "severity-medium";
+  }
+  return "severity-low";
+}
+
+function getScoreClass(score) {
+  if (score >= 80) {
+    return "score-good";
+  }
+  if (score >= 60) {
+    return "score-fair";
+  }
+  return "score-poor";
+}
+
+function buildStatusAnnouncement() {
+  if (state.loading) {
+    return "Running privacy analysis.";
+  }
+  if (state.isProcessing) {
+    return `Applying ${state.selectedActionIds.length} selected recommendation${state.selectedActionIds.length === 1 ? "" : "s"
+      }.`;
+  }
+  if (state.actionResults.length > 0) {
+    const successCount = state.actionResults.filter((result) => result.status === "success").length;
+    const failedCount = state.actionResults.filter((result) => result.status === "failed").length;
+    const skippedCount = state.actionResults.filter((result) => result.status === "skipped").length;
+    return `Action run complete. ${successCount} succeeded, ${failedCount} failed, ${skippedCount} skipped.`;
+  }
+  return "Ready to improve privacy.";
+}
+
 const GUIDED_ACTION_INSTRUCTIONS = Object.freeze({
   limit_third_party_scripts: {
     title: "Limit third-party scripts",
@@ -169,9 +216,15 @@ function renderInstructionsModal() {
 
   return `
     <section class="instructions-modal-overlay" aria-label="Action instructions confirmation">
-      <div class="instructions-modal">
-        <h2>Before we continue</h2>
-        <p>Some selected actions need a quick manual confirmation in Chrome settings.</p>
+      <div
+        class="instructions-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="instructions-modal-title"
+        aria-describedby="instructions-modal-description"
+      >
+        <h2 id="instructions-modal-title">Before we continue</h2>
+        <p id="instructions-modal-description">Some selected actions need a quick manual confirmation in Chrome settings.</p>
         ${content}
         <div class="instructions-actions">
           <button id="instructions-cancel-button" type="button">Cancel</button>
@@ -635,36 +688,49 @@ function render() {
   }
 
   if (state.loading) {
-    root.innerHTML = "<p>Running privacy analysis...</p>";
+    root.innerHTML = `
+      <main class="app-shell">
+        <section class="panel panel-loading">
+          <p class="muted-text">Running privacy analysis...</p>
+        </section>
+      </main>
+    `;
     return;
   }
 
   if (state.errorMessage) {
-    root.innerHTML = `<p class="error-text">${state.errorMessage}</p>`;
+    root.innerHTML = `
+      <main class="app-shell">
+        <section class="panel panel-error">
+          <p class="error-text">${state.errorMessage}</p>
+        </section>
+      </main>
+    `;
     return;
   }
 
   const model = asViewModel(state.analysisResult);
+  const scoreClass = getScoreClass(model.score);
   const recommendationItems =
     model.recommendations.length === 0
-      ? "<p>No recommendations available for this page.</p>"
-      : `<ul>${model.recommendations
+      ? "<p class=\"muted-text\">No recommendations available for this page.</p>"
+      : `<ul class="recommendation-list">${model.recommendations
         .map(
           (recommendation) => `
-          <li>
-            <label>
+          <li class="recommendation-item">
+            <label class="checkbox-row">
               <input
                 type="checkbox"
                 data-action-id="${recommendation.actionId}"
                 ${state.selectedActionIds.includes(recommendation.actionId) ? "checked" : ""}
               />
-              ${recommendation.title}
+              <span>${recommendation.title}</span>
             </label>
             ${recommendation.previouslyAcknowledged
-              ? `<p><em>Previously acknowledged for this domain.</em></p>`
+              ? `<p class="pill-info">Previously acknowledged for this domain</p>`
               : ""
             }
-            <p>${recommendation.rationale}</p>
+            <p class="item-description">${recommendation.rationale}</p>
           </li>
         `
         )
@@ -672,13 +738,16 @@ function render() {
 
   const riskItems =
     model.risks.length === 0
-      ? "<p>No active risk rules triggered.</p>"
-      : `<ul>${model.risks
+      ? "<p class=\"muted-text\">No active risk rules triggered.</p>"
+      : `<ul class="risk-list">${model.risks
         .map(
           (risk) => `
-          <li>
-            <p><strong>${risk.title}</strong> (${risk.severity})</p>
-            <p>${risk.explanation}</p>
+          <li class="risk-item">
+            <div class="risk-title-row">
+              <p class="risk-title">${risk.title}</p>
+              <span class="severity-pill ${getSeverityClass(risk.severity)}">${risk.severity}</span>
+            </div>
+            <p class="item-description">${risk.explanation}</p>
             ${Array.isArray(risk.details) && risk.details.length > 0
               ? `<details class="risk-details"><summary>Show details</summary><ul>${risk.details
                 .map((detail) => `<li>${detail}</li>`)
@@ -693,14 +762,14 @@ function render() {
   const actionResultItems =
     state.actionResults.length === 0
       ? ""
-      : `<section aria-label="Last action run">
+      : `<section class="panel panel-subtle" aria-label="Last action run">
           <h3>Last action run</h3>
-          <ul>${state.actionResults
+          <ul class="result-list" aria-live="polite" aria-atomic="true">${state.actionResults
         .map(
           (result) => `
-            <li>
-              <p><strong>${result.actionId}</strong>: ${result.status}</p>
-              <p>${result.message}</p>
+            <li class="result-item">
+              <p class="result-title"><strong>${toActionDisplayLabel(result.actionId)}</strong>: ${result.status}</p>
+              <p class="item-description">${result.message}</p>
             </li>
           `
         )
@@ -708,29 +777,42 @@ function render() {
         </section>`;
 
   root.innerHTML = `
-    <section>
-      <h1>Privacy Assistant</h1>
-      <p>Domain: ${model.domain}</p>
+    <main class="app-shell">
+    <section class="panel panel-hero">
+      <div class="hero-header">
+        <h1>Privacy Assistant</h1>
+        <span class="confidence-pill">Confidence: ${String(model.confidence).toUpperCase()}</span>
+      </div>
+      <p class="domain-text">Domain: ${model.domain}</p>
+      <p class="status-text" role="status" aria-live="polite" aria-atomic="true">${buildStatusAnnouncement()}</p>
     </section>
-    <section>
+
+    <section class="panel panel-score">
       <h2>Privacy Score</h2>
-      <p><strong>${model.score.toFixed(2)} / 100</strong></p>
-      <p>Confidence: ${String(model.confidence).toUpperCase()}</p>
+      <p class="score-value ${scoreClass}">${model.score.toFixed(2)} <span>/ 100</span></p>
     </section>
-    <section>
+
+    <section class="panel">
       <h2>Risks</h2>
       ${riskItems}
     </section>
-    <section>
+
+    <section class="panel">
       <h2>Recommendations</h2>
+      <p class="selected-text">Selected: ${state.selectedActionIds.length}</p>
       ${recommendationItems}
-      <button id="improve-privacy-button" ${state.isProcessing || state.selectedActionIds.length === 0 ? "disabled" : ""
+      <button
+        class="primary-button"
+        id="improve-privacy-button"
+        aria-label="Improve privacy with selected recommendations"
+        ${state.isProcessing || state.selectedActionIds.length === 0 ? "disabled" : ""
     }>
         ${state.isProcessing ? "Improving..." : "Improve Privacy"}
       </button>
       ${actionResultItems}
     </section>
     ${renderInstructionsModal()}
+    </main>
   `;
 
   const checkboxes = Array.from(root.querySelectorAll('input[data-action-id]'));
@@ -750,6 +832,9 @@ function render() {
   });
 
   const instructionsCancelButton = root.querySelector("#instructions-cancel-button");
+  if (state.instructionsModal.open) {
+    instructionsCancelButton?.focus();
+  }
   instructionsCancelButton?.addEventListener("click", () => {
     state.instructionsModal = {
       open: false,
@@ -766,6 +851,17 @@ function render() {
     };
     void runImprovePrivacyFlow(true);
   });
+  if (state.instructionsModal.open) {
+    root.querySelector(".instructions-modal-overlay")?.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        state.instructionsModal = {
+          open: false,
+          actionIds: []
+        };
+        render();
+      }
+    });
+  }
 }
 
 function sendMessage(request) {

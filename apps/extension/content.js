@@ -26,10 +26,71 @@ const TRACKING_QUERY_PARAM_PATTERNS = Object.freeze([
   "utm_",
   "fbclid",
   "gclid",
-  "msclkid"
+  "msclkid",
+  "yclid",
+  "ttclid",
+  "twclid",
+  "igshid",
+  "wbraid",
+  "gbraid"
 ]);
 
-function comparableDomain(hostname) {
+const COMMON_MULTI_PART_PUBLIC_SUFFIXES = new Set([
+  "co.uk",
+  "org.uk",
+  "gov.uk",
+  "ac.uk",
+  "net.uk",
+  "sch.uk",
+  "com.au",
+  "net.au",
+  "org.au",
+  "edu.au",
+  "gov.au",
+  "asn.au",
+  "id.au",
+  "co.nz",
+  "org.nz",
+  "govt.nz",
+  "ac.nz",
+  "co.jp",
+  "ne.jp",
+  "or.jp",
+  "go.jp",
+  "ac.jp",
+  "com.br",
+  "net.br",
+  "org.br",
+  "gov.br",
+  "com.mx",
+  "org.mx",
+  "gob.mx",
+  "co.kr",
+  "or.kr",
+  "go.kr",
+  "ac.kr",
+  "co.in",
+  "firm.in",
+  "net.in",
+  "org.in",
+  "gen.in",
+  "ind.in",
+  "gov.in",
+  "edu.in",
+  "res.in",
+  "com.sg",
+  "net.sg",
+  "org.sg",
+  "gov.sg",
+  "edu.sg",
+  "com.tr",
+  "net.tr",
+  "org.tr",
+  "gov.tr",
+  "edu.tr"
+]);
+
+function getComparableDomain(hostname) {
   if (typeof hostname !== "string") {
     return "";
   }
@@ -37,16 +98,28 @@ function comparableDomain(hostname) {
   if (!clean) {
     return "";
   }
+
+  const isIpv4 = /^\d{1,3}(\.\d{1,3}){3}$/.test(clean);
+  if (isIpv4 || clean.includes(":")) {
+    return clean;
+  }
+
   const segments = clean.split(".").filter(Boolean);
   if (segments.length <= 2) {
     return clean;
   }
-  return segments.slice(-2).join(".");
+
+  const twoPartSuffix = segments.slice(-2).join(".");
+  if (COMMON_MULTI_PART_PUBLIC_SUFFIXES.has(twoPartSuffix) && segments.length >= 3) {
+    return segments.slice(-3).join(".");
+  }
+
+  return twoPartSuffix;
 }
 
 function isThirdPartyHost(targetHost, firstPartyHost) {
-  const target = comparableDomain(targetHost);
-  const firstParty = comparableDomain(firstPartyHost);
+  const target = getComparableDomain(targetHost);
+  const firstParty = getComparableDomain(firstPartyHost);
   if (!target || !firstParty) {
     return false;
   }
@@ -286,6 +359,14 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   }
 
   if (message.type !== MESSAGE_TYPES.COLLECT_PAGE_SIGNALS) {
+    sendResponse({
+      ok: false,
+      source: "content",
+      requestId: message.requestId ?? null,
+      status: "failed",
+      code: "UNSUPPORTED_MESSAGE_TYPE",
+      error: `Unsupported content message type: ${String(message.type)}`
+    });
     return;
   }
 

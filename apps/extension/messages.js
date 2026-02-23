@@ -29,13 +29,6 @@ export const SUSPICIOUS_ENDPOINT_PATTERNS = Object.freeze([
   "events"
 ]);
 
-export const TRACKING_QUERY_PARAM_PATTERNS = Object.freeze([
-  "utm_",
-  "fbclid",
-  "gclid",
-  "msclkid"
-]);
-
 const COMMON_MULTI_PART_PUBLIC_SUFFIXES = new Set([
   "co.uk",
   "org.uk",

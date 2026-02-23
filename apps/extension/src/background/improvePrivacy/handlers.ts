@@ -5,14 +5,26 @@ import type {
   ImprovePrivacyActionHandlerRegistry
 } from "./actionQueue";
 
-declare const chrome: any;
-
 type CookieRecord = {
   name: string;
   domain?: string;
   path?: string;
   secure?: boolean;
   storeId?: string;
+};
+
+type ChromeCookieApi = {
+  getAll: (details: { url: string }) => Promise<readonly CookieRecord[]>;
+  remove: (details: { url: string; name: string; storeId?: string }) => Promise<unknown>;
+};
+
+type ChromeTabsApi = {
+  create: (details: { url: string }) => Promise<unknown>;
+};
+
+declare const chrome: {
+  cookies: ChromeCookieApi;
+  tabs: ChromeTabsApi;
 };
 
 function normalizeDomain(domain: string | null): string {
@@ -75,7 +87,7 @@ async function clearCookiesForCurrentSite(
       const removed = await chrome.cookies.remove({
         url: removalUrl,
         name: cookie.name,
-        storeId: cookie.storeId
+        ...(cookie.storeId ? { storeId: cookie.storeId } : {})
       });
       if (removed) {
         removedCount += 1;

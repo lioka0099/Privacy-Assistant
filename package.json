@@ -2,6 +2,7 @@
   "name": "privacy-assistant",
   "version": "0.1.0",
   "private": true,
+  "type": "module",
   "packageManager": "pnpm@10.15.0",
   "scripts": {
     "dev": "corepack pnpm -r --parallel run dev",
@@ -11,6 +12,10 @@
     "typecheck": "corepack pnpm -r run typecheck"
   },
   "devDependencies": {
+    "@eslint/js": "^9.35.0",
+    "eslint": "^9.35.0",
+    "globals": "^16.4.0",
+    "typescript-eslint": "^8.43.0",
     "typescript": "^5.9.2"
   }
 }

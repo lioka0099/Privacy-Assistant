@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "echo \"extension dev setup in step 2\"",
     "build": "echo \"extension build setup in step 2\"",
-    "lint": "echo \"extension lint setup deferred\"",
+    "lint": "eslint . --max-warnings=0",
     "test": "echo \"extension tests setup deferred\"",
     "typecheck": "tsc -p tsconfig.json"
   },

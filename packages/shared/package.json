@@ -9,7 +9,7 @@
   "scripts": {
     "dev": "echo \"shared dev not required\"",
     "build": "echo \"shared build setup in step 1.2\"",
-    "lint": "echo \"shared lint setup deferred\"",
+    "lint": "eslint . --max-warnings=0",
     "test": "vitest run --pool=threads",
     "typecheck": "tsc -p tsconfig.json"
   },

@@ -118,8 +118,8 @@ function buildNormalizedAnalysis({ requestId, tabContext, collectors, durationMs
   const storageSignals = getNestedCollectorData(contentPageSignals, "storageSignals") ?? {};
   const trackingHeuristics = getNestedCollectorData(contentPageSignals, "trackingHeuristics") ?? {};
   const pageContext = getNestedCollectorData(contentPageSignals, "pageContext") ?? {};
-  const cookieSignals = getCollectorData(collectors, "cookieSignals") ?? {};
-  const networkSignals = getCollectorData(collectors, "networkRequestSignals") ?? {};
+  const cookieSignals = getCollectorData(collectors, "cookieSignals");
+  const networkSignals = getCollectorData(collectors, "networkRequestSignals");
   const networkSignalsAvailable = Boolean(networkSignals) && networkSignals.available !== false;
   const baseConfidence = calculateConfidence(collectors);
 
@@ -167,38 +167,40 @@ function buildNormalizedAnalysis({ requestId, tabContext, collectors, durationMs
       trackingQueryParams: toSortedStringArray(trackingHeuristics.trackingQueryParams)
     },
     cookieSignals: {
-      totalCookieCount: toSafeNumber(cookieSignals.totalCookieCount),
-      firstPartyCookieCount: toSafeNumber(cookieSignals.firstPartyCookieCount),
-      thirdPartyCookieEstimateCount: toSafeNumber(cookieSignals.thirdPartyCookieEstimateCount),
-      thirdPartyCookieDomains: toSortedStringArray(cookieSignals.thirdPartyCookieDomains)
+      totalCookieCount: toSafeNumber(cookieSignals?.totalCookieCount),
+      firstPartyCookieCount: toSafeNumber(cookieSignals?.firstPartyCookieCount),
+      thirdPartyCookieEstimateCount: toSafeNumber(cookieSignals?.thirdPartyCookieEstimateCount),
+      thirdPartyCookieDomains: toSortedStringArray(cookieSignals?.thirdPartyCookieDomains)
     },
     networkSignals: {
       available: networkSignalsAvailable,
-      unavailableReason: networkSignalsAvailable ? null : networkSignals.unavailableReason ?? "UNKNOWN",
-      observedWindowMs: toSafeNumber(networkSignals.observedWindowMs),
-      totalObservedRequests: toSafeNumber(networkSignals.totalObservedRequests),
-      thirdPartyRequestCount: toSafeNumber(networkSignals.thirdPartyRequestCount),
-      thirdPartyTopHosts: sanitizeCountedItems(networkSignals.thirdPartyTopHosts, "host"),
-      suspiciousEndpointHitCount: toSafeNumber(networkSignals.suspiciousEndpointHitCount),
+      unavailableReason: networkSignalsAvailable
+        ? null
+        : networkSignals?.unavailableReason ?? "WEBREQUEST_LISTENER_UNAVAILABLE",
+      observedWindowMs: toSafeNumber(networkSignals?.observedWindowMs),
+      totalObservedRequests: toSafeNumber(networkSignals?.totalObservedRequests),
+      thirdPartyRequestCount: toSafeNumber(networkSignals?.thirdPartyRequestCount),
+      thirdPartyTopHosts: sanitizeCountedItems(networkSignals?.thirdPartyTopHosts, "host"),
+      suspiciousEndpointHitCount: toSafeNumber(networkSignals?.suspiciousEndpointHitCount),
       suspiciousEndpointPatternCounts: sanitizeCountedItems(
-        networkSignals.suspiciousEndpointPatternCounts,
+        networkSignals?.suspiciousEndpointPatternCounts,
         "pattern"
       ),
-      knownTrackerDomainHitCount: toSafeNumber(networkSignals.knownTrackerDomainHitCount),
-      shortWindowBurstCount: toSafeNumber(networkSignals.shortWindowBurstCount),
-      knownTrackerDomains: toSortedStringArray(networkSignals.knownTrackerDomains)
+      knownTrackerDomainHitCount: toSafeNumber(networkSignals?.knownTrackerDomainHitCount),
+      shortWindowBurstCount: toSafeNumber(networkSignals?.shortWindowBurstCount),
+      knownTrackerDomains: toSortedStringArray(networkSignals?.knownTrackerDomains)
     },
     derived: {
       totalThirdPartySignals:
         toSafeNumber(scriptSignals.thirdPartyScriptDomainCount) +
-        toSafeNumber(cookieSignals.thirdPartyCookieEstimateCount) +
-        toSafeNumber(networkSignals.thirdPartyRequestCount),
+        toSafeNumber(cookieSignals?.thirdPartyCookieEstimateCount) +
+        toSafeNumber(networkSignals?.thirdPartyRequestCount),
       totalTrackingIndicators:
         toSafeNumber(trackingHeuristics.trackerDomainHitCount) +
         toSafeNumber(trackingHeuristics.endpointPatternHitCount) +
         toSafeNumber(trackingHeuristics.trackingQueryParamCount) +
-        toSafeNumber(networkSignals.suspiciousEndpointHitCount) +
-        toSafeNumber(networkSignals.knownTrackerDomainHitCount)
+        toSafeNumber(networkSignals?.suspiciousEndpointHitCount) +
+        toSafeNumber(networkSignals?.knownTrackerDomainHitCount)
     },
     confidence: networkSignalsAvailable ? baseConfidence : degradeConfidence(baseConfidence)
   };
@@ -270,23 +272,65 @@ try {
 }
 
 async function collectCookieSignals(tabContext) {
-  const cookies = await chrome.cookies.getAll({ url: tabContext.url });
   const firstPartyHost = tabContext.hostname;
+  const cookies = await chrome.cookies.getAll({ url: tabContext.url });
 
-  let firstPartyCookieCount = 0;
+  let firstPartyCookieCount = cookies.length;
   let thirdPartyCookieEstimateCount = 0;
   const thirdPartyDomains = new Set();
 
-  for (const cookie of cookies) {
-    const cookieDomain = (cookie.domain ?? "").replace(/^\./, "");
-    const thirdParty = isThirdPartyHost(cookieDomain, firstPartyHost);
-    if (thirdParty) {
-      thirdPartyCookieEstimateCount += 1;
-      if (cookieDomain) {
+  // `chrome.cookies.getAll({ url })` primarily returns cookies scoped to the current page's URL,
+  // which tends to miss third-party cookie state. To estimate third-party cookies relevant to the
+  // current page, sample top observed third-party request hosts from recent network events and
+  // query cookie state for those hosts.
+  if (networkCollectionState.listenerReady) {
+    const events = networkEventsByTab.get(tabContext.tabId) ?? [];
+    const now = Date.now();
+    const recentEvents = events.filter((event) => event.timestampMs >= now - NETWORK_WINDOW_MS);
+
+    const thirdPartyHostCounts = new Map();
+    for (const event of recentEvents) {
+      const host = typeof event?.requestHost === "string" ? event.requestHost : "";
+      if (!host) {
+        continue;
+      }
+      if (!isThirdPartyHost(host, firstPartyHost)) {
+        continue;
+      }
+      const existingCount = thirdPartyHostCounts.get(host) ?? 0;
+      thirdPartyHostCounts.set(host, existingCount + 1);
+    }
+
+    const topThirdPartyHosts = Array.from(thirdPartyHostCounts.entries())
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .slice(0, 5)
+      .map(([host]) => host);
+
+    const cookieBatches = await Promise.all(
+      topThirdPartyHosts.map(async (host) => {
+        try {
+          return await chrome.cookies.getAll({ url: `https://${host}/` });
+        } catch {
+          return [];
+        }
+      })
+    );
+
+    for (const batch of cookieBatches) {
+      if (!Array.isArray(batch)) {
+        continue;
+      }
+      for (const cookie of batch) {
+        const cookieDomain = (cookie?.domain ?? "").replace(/^\./, "");
+        if (!cookieDomain) {
+          continue;
+        }
+        if (!isThirdPartyHost(cookieDomain, firstPartyHost)) {
+          continue;
+        }
+        thirdPartyCookieEstimateCount += 1;
         thirdPartyDomains.add(cookieDomain);
       }
-    } else {
-      firstPartyCookieCount += 1;
     }
   }
 
@@ -557,6 +601,11 @@ async function runAnalysisPipeline(requestId) {
           contentSignalsAvailable: false,
           cookieSignalsAvailable: false,
           networkSignalsAvailable: false
+        },
+        networkSignals: {
+          ...normalizedAnalysis.networkSignals,
+          available: false,
+          unavailableReason: "UNSUPPORTED_ACTIVE_TAB"
         }
       }
     };
@@ -871,6 +920,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     const requestId = message.requestId ?? createRequestId("improve_privacy");
     const selectedActionIds = Array.isArray(message.selectedActionIds)
       ? message.selectedActionIds
+          .filter((actionId) => typeof actionId === "string" && actionId.trim().length > 0)
+          .slice(0, 25)
       : [];
 
     (async () => {
@@ -913,6 +964,14 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   }
 
   if (message.type !== MESSAGE_TYPES.RUN_ANALYSIS) {
+    sendResponse(
+      createErrorPayload({
+        source: "background",
+        requestId: message.requestId ?? null,
+        code: "UNSUPPORTED_MESSAGE_TYPE",
+        error: `Unsupported background message type: ${String(message.type)}`
+      })
+    );
     return;
   }
 
