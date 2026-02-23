@@ -14,10 +14,6 @@
     "verbatimModuleSyntax": true,
     "allowSyntheticDefaultImports": true,
     "baseUrl": ".",
-    "paths": {
-      "@shared/*": [
-        "packages/shared/src/*"
-      ]
-    }
+    "paths": {}
   }
 }

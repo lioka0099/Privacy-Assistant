@@ -1,10 +1,52 @@
-import type {
-  ConfidenceAssessment,
-  PrivacyScoreComputation,
-  Recommendation,
-  RecommendationActionId,
-  RiskDetectionOutput
-} from "@shared/index";
+export type ConfidenceLevel = "low" | "medium" | "high";
+
+export type ConfidenceReason = {
+  code: string;
+  message: string;
+};
+
+export type ConfidenceAssessment = {
+  score: number;
+  level: ConfidenceLevel;
+  reasons: readonly ConfidenceReason[];
+  rulesetVersion?: string;
+};
+
+export type PrivacyScoreComputation = {
+  score: number;
+  totalPenalty?: number;
+  contributions?: unknown;
+  strongestNegativeReasons?: unknown;
+};
+
+export type RiskSeverity = "low" | "medium" | "high";
+
+export type RiskItem = {
+  id: string;
+  title: string;
+  severity: RiskSeverity;
+  explanation: string;
+  details?: readonly string[];
+};
+
+export type RiskDetectionOutput = readonly RiskItem[];
+
+export type RecommendationActionId =
+  | "reduce_third_party_cookies"
+  | "limit_third_party_scripts"
+  | "clear_site_storage_data"
+  | "block_known_trackers"
+  | "review_tracking_permissions"
+  | "harden_network_privacy";
+
+export type Recommendation = {
+  actionId: RecommendationActionId;
+  title: string;
+  rationale: string;
+  severity?: RiskSeverity;
+  priority?: string;
+  triggeredByRiskIds?: readonly string[];
+};
 
 export const MESSAGE_TYPES = {
   PING: "PING",

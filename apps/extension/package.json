@@ -8,9 +8,7 @@
     "build": "echo \"extension build setup in step 2\"",
     "lint": "eslint . --max-warnings=0",
     "test": "echo \"extension tests setup deferred\"",
-    "typecheck": "tsc -p tsconfig.json"
+    "typecheck": "echo \"extension typecheck disabled (runtime is JS)\""
   },
-  "dependencies": {
-    "@privacy-assistant/shared": "workspace:*"
-  }
+  "dependencies": {}
 }

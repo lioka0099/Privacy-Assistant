@@ -2,15 +2,9 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "composite": true,
-    "noEmit": true,
-    "jsx": "preserve"
+    "noEmit": true
   },
   "include": [
-    "src"
-  ],
-  "references": [
-    {
-      "path": "../../packages/shared"
-    }
+    "src/**/*.ts"
   ]
 }
